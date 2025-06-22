@@ -1,0 +1,23 @@
+```gitignore
+# Ignore build artifacts and temp files
+*.o
+*.a
+*.so
+*.out
+*.log
+*~
+*.swp
+*.dSYM/
+bak/
+nogit/
+testdata/
+pp.cache
+ppdb.json
+paperpusher
+.cache
+.error.log
+compile_commands.json
+# Ignore build dirs
+build/
+# Ignore OS stuff
+.DS_Store
