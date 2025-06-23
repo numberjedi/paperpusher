@@ -8,7 +8,7 @@ PKG_LIBS    := $(shell pkg-config --libs gtk+-3.0 poppler-glib)
 CFLAGS += $(PKG_CFLAGS)
 LDFLAGS += $(PKG_LIBS) -lcjson -lm
 
-SOURCES = $(wildcard src/*.c src/gui/*.c src/cJSON/*.c)
+SOURCES = $(wildcard src/*.c src/gui/*.c src/cJSON/cJSON.c)
 OBJECTS = $(SOURCES:.c=.o)
 TARGET = paperpusher
 
@@ -23,7 +23,7 @@ src/%.o: src/%.c
 src/gui/%.o: src/gui/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-src/cJSON/$.o: src/cJSON/%.c
+src/cJSON/cJSON.o: src/cJSON/cJSON.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
