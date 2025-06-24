@@ -5,8 +5,7 @@
 Paper*
 create_empty_paper()
 {
-    return create_paper(
-      NULL, NULL, 0, 0, NULL, 0, NULL, NULL, NULL, NULL);
+    return create_paper(NULL, NULL, 0, 0, NULL, 0, NULL, NULL, NULL, NULL);
 }
 
 Paper*
@@ -94,7 +93,8 @@ remove_paper(PaperDatabase* db, Paper* paper)
                 db->papers[j] = db->papers[j + 1];
             }
             db->count--;
-            // Optionally, nullify the last paper pointer to avoid dangling pointer
+            // Optionally, nullify the last paper pointer to avoid dangling
+            // pointer
             db->papers[db->count] = NULL;
             return;
         }
