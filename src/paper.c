@@ -80,6 +80,28 @@ add_paper(PaperDatabase* db, Paper* paper)
 }
 
 void
+remove_paper(PaperDatabase* db, Paper* paper)
+{
+    if (!db || !paper) {
+        return;
+    }
+
+    for (int i = 0; i < db->count; i++) {
+        if (db->papers[i] == paper) {
+            free_paper(paper);
+            // Shift papers down to fill the gap
+            for (int j = i; j < db->count - 1; j++) {
+                db->papers[j] = db->papers[j + 1];
+            }
+            db->count--;
+            // Optionally, nullify the last paper pointer to avoid dangling pointer
+            db->papers[db->count] = NULL;
+            return;
+        }
+    }
+}
+
+void
 free_paper(Paper* p)
 {
     if (!p)

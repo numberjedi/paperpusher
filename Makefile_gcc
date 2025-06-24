@@ -1,8 +1,6 @@
-CC = clang
-#CFLAGS = -Wall -Wextra -I. -Isrc -g -O0 -fsanitize=address -fno-omit-frame-pointer
-CFLAGS = -Wall -Wextra -I. -Isrc -g -O1
-#LDFLAGS = -fsanitize=address
-LDFLAGS =
+CC = gcc
+CFLAGS = -Wall -Wextra -I. -Isrc -g -O0 -fsanitize=address -fno-omit-frame-pointer
+LDFLAGS = -fsanitize=address
 
 PKG_CFLAGS  := $(shell pkg-config --cflags gtk+-3.0 poppler-glib)
 PKG_LIBS    := $(shell pkg-config --libs gtk+-3.0 poppler-glib)
@@ -11,7 +9,7 @@ CFLAGS += $(PKG_CFLAGS)
 LDFLAGS += $(PKG_LIBS) -lcjson -lm
 
 SOURCES = $(wildcard src/*.c src/gui/*.c src/cJSON/cJSON.c)
-OBJECTS = $(patsubst src/%,build/%, $(SOURCES:.c=.o))
+OBJECTS = $(SOURCES:.c=.o)
 TARGET = paperpusher
 
 all: $(TARGET)
@@ -19,13 +17,13 @@ all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)
 
-build/%.o: src/%.c
+src/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/gui/%.o: src/gui/%.c
+src/gui/%.o: src/gui/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/cJSON/cJSON.o: src/cJSON/cJSON.c
+src/cJSON/cJSON.o: src/cJSON/cJSON.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:

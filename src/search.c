@@ -13,24 +13,24 @@ tokenize_query(const gchar* query,
 {
     g_autofree gchar* lower_query = g_utf8_strdown(query, -1);
     gint count = 0;
-    const gchar* p = lower_query;
+    const gchar* pointer = lower_query;
 
     // contains some magic to make it utf8 compatible
     // breaks on '\0'
-    while (*p && count < MAX_KEYWORDS) {
-        while (*p && g_unichar_isspace(g_utf8_get_char(p)))
-            p = g_utf8_next_char(p); // skip whitespace
+    while (*pointer && count < MAX_KEYWORDS) {
+        while (*pointer && g_unichar_isspace(g_utf8_get_char(pointer)))
+            pointer = g_utf8_next_char(pointer); // skip whitespace
         gint len = 0;
         gint char_len =
-          g_utf8_validate(p, -1, NULL) ? g_utf8_next_char(p) - p : 1;
+          g_utf8_validate(pointer, -1, NULL) ? g_utf8_next_char(pointer) - pointer : 1;
         // get new utf8 char (breaks on '\0')
-        while (*p && !g_unichar_isspace(g_utf8_get_char(p))) {
+        while (*pointer && !g_unichar_isspace(g_utf8_get_char(pointer))) {
             if (len + char_len < MAX_KEYWORD_LEN - 1) { // enough space?
                 memcpy(&keywords[count][len],
-                       p,
+                       pointer,
                        char_len); // copy bytes of utf8 char into keyword
                 len += char_len;
-                p += char_len;
+                pointer += char_len;
             } else
                 break;
         }
@@ -132,7 +132,7 @@ search_papers(const Paper* const* papers,
     gint kw_count = tokenize_query(query, keywords);
 
     // growable ptr array to be cleaned up with g_free()
-    //GPtrArray* array = g_ptr_array_new_with_free_func(g_free);
+    // GPtrArray* array = g_ptr_array_new_with_free_func(g_free);
     GPtrArray* array = g_ptr_array_new();
 
     for (int i = 0; i < paper_count; ++i) {
@@ -153,7 +153,8 @@ search_papers(const Paper* const* papers,
         results[i] = sr->paper;
     }
 
-    //g_ptr_array_free(array, TRUE); // clean up everything with the stored g_free
+    // g_ptr_array_free(array, TRUE); // clean up everything with the stored
+    // g_free
 
     return limit;
 }
