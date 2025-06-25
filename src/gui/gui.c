@@ -2,6 +2,7 @@
 #include "../parser.h"
 #include "../search.h"
 #include "gui/pdf_viewer.h"
+#include "paper.h"
 #include <gdk/gdkkeysyms.h>
 #include <gio/gio.h>
 #include <glib.h>
@@ -18,29 +19,6 @@ static GtkListBox* results_list;
 static GtkLabel* pdf_preview;
 
 /* Forward declarations */
-static void
-on_search_changed(GtkEntry*, gpointer);
-static void
-on_results_row_selected(GtkListBox*, GtkListBoxRow*, gpointer);
-static gboolean
-on_key_press(GtkWidget*, GdkEventKey*, gpointer);
-static void
-on_pdf_dropped(GtkWidget*,
-               GdkDragContext*,
-               gint,
-               gint,
-               GtkSelectionData*,
-               guint,
-               guint,
-               gpointer);
-static void
-parser_task(GTask*, gpointer, gpointer, GCancellable*);
-static void
-parser_ready(GObject*, GAsyncResult*, gpointer);
-static GtkListBoxRow*
-get_adjacent_row(GtkListBox*, GtkListBoxRow*, gboolean);
-static void
-navigate(GtkListBox*, gboolean);
 
 /* ensure label text is valid UTF-8 */
 static gchar*
@@ -62,7 +40,7 @@ on_search_changed(GtkEntry* entry, gpointer user_data)
     const char* q = gtk_entry_get_text(entry);
     const Paper* results[MAX_RESULTS];
     int found =
-      search_papers(s_db->papers, s_db->count, q, results, MAX_RESULTS);
+      search_papers((const Paper *const *)s_db->papers, s_db->count, q, results, MAX_RESULTS);
 
     gtk_list_box_unselect_all(results_list);
 
@@ -214,6 +192,57 @@ on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data)
     return FALSE;
 }
 
+/**
+ * Main-loop callback for parser completion. Takes db as argument (not global
+ * s_db). Handles the propagated GError*
+ */
+static void
+parser_task_callback(PaperDatabase* db,
+                     Paper* p, // should I pass the paper id and reference through db instead?
+                     gpointer user_data,
+                     GError* error)
+{
+    // user_data not currently used
+    (void)user_data;
+    // db not currently used
+    (void)db;
+
+    if (error) {
+        gchar* pdf_file = NULL;
+        if (p && p->pdf_file) 
+            pdf_file = p->pdf_file;
+        else 
+            pdf_file = "<N/A>";
+
+        g_printerr(
+          "Error parsing PDF metadata for file: %s.\nError message: %s.",
+          pdf_file,
+          error->message);
+        g_error_free(error);
+    }
+
+    if (!p) {
+        g_printerr("Error parsing file, result is NULL.\n");
+        return;
+    }
+    // logic to update the progress bar goes here. 
+    // For now just print success message in the terminal.
+    g_message("Successfully parsed '%s'.\n", p->pdf_file);
+    // TODO: update progress bar
+
+    // (p is owned by the PaperDatabase now, do not free)
+}
+
+/* Background parser thread */
+static void
+fire_parser_task(gchar* path)
+{
+    if (!path)
+        return;
+    g_print("Parsing '%s'...\n", path);
+    async_parser_run(s_db, path, parser_task_callback, NULL);
+}
+
 /* Drag-and-drop: process dropped PDF URIs */
 static void
 on_pdf_dropped(GtkWidget* widget,
@@ -235,56 +264,15 @@ on_pdf_dropped(GtkWidget* widget,
     if (!uris)
         return;
 
+    // fire off a task for each URI
     for (int i = 0; uris && uris[i]; ++i) {
+        // free path when the task returns
         gchar* path = g_filename_from_uri(uris[i], NULL, NULL);
-        if (!path)
-            continue;
-
-        GTask* task = g_task_new(NULL, NULL, parser_ready, NULL);
-        g_task_set_task_data(task, path, g_free);
-        g_task_run_in_thread(task, parser_task);
-        g_object_unref(task);
+        fire_parser_task(path);
     }
 
     g_strfreev(uris);
     gtk_drag_finish(context, TRUE, FALSE, time);
-}
-
-/* Background parser thread */
-static void
-parser_task(GTask* task,
-            gpointer source_object,
-            gpointer task_data,
-            GCancellable* cancellable)
-{
-    (void)source_object;
-    (void)cancellable;
-
-    gchar* path = task_data;
-    GError* err = NULL;
-    Paper* p = parser_run(s_db, path, &err);
-    if (!p) {
-        g_task_return_error(task, err);
-    } else {
-        g_task_return_pointer(task, p, NULL);
-    }
-    // GTask will free on its own
-}
-
-/* Main-loop callback for parser completion */
-static void
-parser_ready(GObject* source_object, GAsyncResult* result, gpointer user_data)
-{
-    (void)source_object;
-    (void)user_data;
-
-    GError* error = NULL;
-    Paper* p = g_task_propagate_pointer(G_TASK(result), &error);
-    if (error) {
-        g_printerr("Error parsing PDF metadata: %s\n", error->message);
-        g_error_free(error);
-    }
-    // (p is owned by the PaperDatabase now, no manual free)
 }
 
 /* --- Launch the GUI main loop --- */

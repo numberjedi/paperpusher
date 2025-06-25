@@ -1,8 +1,8 @@
 CC = clang
-#CFLAGS = -Wall -Wextra -I. -Isrc -g -O0 -fsanitize=address -fno-omit-frame-pointer
-CFLAGS = -Wall -Wextra -I. -Isrc -g -O1
-#LDFLAGS = -fsanitize=address
-LDFLAGS =
+CFLAGS = -std=c99 -Wall -Wextra -I. -Isrc -g -O0 -fsanitize=address -fno-omit-frame-pointer
+#CFLAGS = -std=c99 -Wall -Wextra -I. -Isrc -g -O1
+LDFLAGS = -fsanitize=address
+#LDFLAGS =
 
 PKG_CFLAGS  := $(shell pkg-config --cflags gtk+-3.0 poppler-glib)
 PKG_LIBS    := $(shell pkg-config --libs gtk+-3.0 poppler-glib)
@@ -12,6 +12,11 @@ LDFLAGS += $(PKG_LIBS) -lcjson -lm
 
 SOURCES = $(wildcard src/*.c src/gui/*.c src/cJSON/cJSON.c)
 OBJECTS = $(patsubst src/%,build/%, $(SOURCES:.c=.o))
+
+APP_SOURCES := $(filter-out src/main.c, $(SOURCES))
+TEST_SOURCES = $(wildcard tests/*.c)
+TEST_BINS = $(patsubst tests/%.c, build/test_%, $(TEST_SOURCES))
+
 TARGET = paperpusher
 
 all: $(TARGET)
@@ -28,6 +33,24 @@ build/gui/%.o: src/gui/%.c
 build/cJSON/cJSON.o: src/cJSON/cJSON.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# tests
+
+# add mocka flags for tests only
+CMOCKA_CFLAGS := $(shell pkg-config --cflags cmocka)
+CMOCKA_LDFLAGS := $(shell pkg-config --libs cmocka)
+TEST_CFLAGS := $(CFLAGS) $(CMOCKA_CFLAGS)
+TEST_LDFLAGS := $(LDFLAGS) $(CMOCKA_LDFLAGS)
+
+# build & run all test binaries
+test: $(TEST_BINS)
+	@echo "Running tests..."
+	@for bin in $^; do echo $$bin; ./$$bin; echo ""; done
+
+#compile each test binary with the app sources
+build/test_%: tests/%.c $(APP_SOURCES)
+	$(CC) $(TEST_CFLAGS) $^ -o $@ $(TEST_LDFLAGS)
+
+# end tests
 clean:
 	rm -f $(OBJECTS) $(TARGET)
 

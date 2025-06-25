@@ -12,11 +12,11 @@
  * Populate db with the resulting Paper objects.
  */
 bool
-load_papers_from_json(PaperDatabase *db, GError **error)
+load_papers_from_json(PaperDatabase* db, GError** error)
 {
     g_return_val_if_fail(db != NULL, FALSE);
 
-    g_autofree gchar *data = NULL;
+    g_autofree gchar* data = NULL;
     gsize length = 0;
     /* Read entire file into memory */
     if (!g_file_get_contents(db->path, &data, &length, error))
@@ -25,7 +25,7 @@ load_papers_from_json(PaperDatabase *db, GError **error)
     if (length == 0)
         return TRUE;
 
-    cJSON *json = cJSON_Parse(data);
+    cJSON* json = cJSON_Parse(data);
     if (!json) {
         g_set_error(error,
                     G_FILE_ERROR,
@@ -37,67 +37,72 @@ load_papers_from_json(PaperDatabase *db, GError **error)
 
     int count = cJSON_GetArraySize(json);
     for (int i = 0; i < count; ++i) {
-        cJSON *item = cJSON_GetArrayItem(json, i);
+        cJSON* item = cJSON_GetArrayItem(json, i);
 
-        const gchar *title =
-            cJSON_IsString(cJSON_GetObjectItem(item, "title")) ?
-            cJSON_GetObjectItem(item, "title")->valuestring : NULL;
+        gchar* title = cJSON_IsString(cJSON_GetObjectItem(item, "title"))
+                               ? cJSON_GetObjectItem(item, "title")->valuestring
+                               : NULL;
 
         /* Authors array */
-        cJSON *arr = cJSON_GetObjectItem(item, "authors");
+        cJSON* arr = cJSON_GetObjectItem(item, "authors");
         int authors_count = cJSON_IsArray(arr) ? cJSON_GetArraySize(arr) : 0;
-        gchar **authors = NULL;
+        gchar** authors = NULL;
         if (authors_count > 0) {
             authors = g_new0(gchar*, authors_count);
             for (int j = 0; j < authors_count; ++j) {
-                cJSON *a = cJSON_GetArrayItem(arr, j);
-                authors[j] = a && a->valuestring
-                             ? g_strdup(a->valuestring)
-                             : g_strdup("");
+                cJSON* a = cJSON_GetArrayItem(arr, j);
+                authors[j] =
+                  a && a->valuestring ? g_strdup(a->valuestring) : g_strdup("");
             }
         }
 
-        int year = cJSON_IsNumber(cJSON_GetObjectItem(item, "year")) ?
-                   cJSON_GetObjectItem(item, "year")->valueint : 0;
+        int year = cJSON_IsNumber(cJSON_GetObjectItem(item, "year"))
+                     ? cJSON_GetObjectItem(item, "year")->valueint
+                     : 0;
 
         /* Keywords array */
         arr = cJSON_GetObjectItem(item, "keywords");
         int kw_count = cJSON_IsArray(arr) ? cJSON_GetArraySize(arr) : 0;
-        gchar **keywords = NULL;
+        gchar** keywords = NULL;
         if (kw_count > 0) {
             keywords = g_new0(gchar*, kw_count);
             for (int j = 0; j < kw_count; ++j) {
-                cJSON *k = cJSON_GetArrayItem(arr, j);
-                keywords[j] = k && k->valuestring
-                              ? g_strdup(k->valuestring)
-                              : g_strdup("");
+                cJSON* k = cJSON_GetArrayItem(arr, j);
+                keywords[j] =
+                  k && k->valuestring ? g_strdup(k->valuestring) : g_strdup("");
             }
         }
 
-        const gchar *abstract =
-            cJSON_IsString(cJSON_GetObjectItem(item, "abstract")) ?
-            cJSON_GetObjectItem(item, "abstract")->valuestring : NULL;
-        const gchar *arxiv_id =
-            cJSON_IsString(cJSON_GetObjectItem(item, "arxiv_id")) ?
-            cJSON_GetObjectItem(item, "arxiv_id")->valuestring : NULL;
-        const gchar *doi =
-            cJSON_IsString(cJSON_GetObjectItem(item, "doi")) ?
-            cJSON_GetObjectItem(item, "doi")->valuestring : NULL;
-        const gchar *pdf_file =
-            cJSON_IsString(cJSON_GetObjectItem(item, "pdf_file")) ?
-            cJSON_GetObjectItem(item, "pdf_file")->valuestring : NULL;
+        gchar* abstract =
+          cJSON_IsString(cJSON_GetObjectItem(item, "abstract"))
+            ? cJSON_GetObjectItem(item, "abstract")->valuestring
+            : NULL;
+        gchar* arxiv_id =
+          cJSON_IsString(cJSON_GetObjectItem(item, "arxiv_id"))
+            ? cJSON_GetObjectItem(item, "arxiv_id")->valuestring
+            : NULL;
+        gchar* doi = cJSON_IsString(cJSON_GetObjectItem(item, "doi"))
+                             ? cJSON_GetObjectItem(item, "doi")->valuestring
+                             : NULL;
+        const gchar* pdf_file =
+          cJSON_IsString(cJSON_GetObjectItem(item, "pdf_file"))
+            ? cJSON_GetObjectItem(item, "pdf_file")->valuestring
+            : NULL;
 
-        Paper *p = create_paper(title,
-                                authors,
-                                authors_count,
-                                year,
-                                keywords,
-                                kw_count,
-                                abstract,
-                                arxiv_id,
-                                doi,
-                                pdf_file);
-        add_paper(db, p);
+        Paper* p = create_paper(db,
+                     title,
+                     authors,
+                     authors_count,
+                     year,
+                     keywords,
+                     kw_count,
+                     abstract,
+                     arxiv_id,
+                     doi,
+                     pdf_file,
+                     error);
+        if (!p)
+            return FALSE;
 
         /* Cleanup temporary arrays */
         if (authors) {
@@ -120,30 +125,28 @@ load_papers_from_json(PaperDatabase *db, GError **error)
  * Synchronously write the database out as JSON to db->path.
  */
 bool
-write_json(const PaperDatabase *db, GError **error)
+write_json(const PaperDatabase* db, GError** error)
 {
     g_return_val_if_fail(db != NULL, FALSE);
 
-    cJSON *root = cJSON_CreateArray();
+    cJSON* root = cJSON_CreateArray();
     for (int i = 0; i < db->count; ++i) {
-        const Paper *p = db->papers[i];
-        cJSON *obj = cJSON_CreateObject();
+        const Paper* p = db->papers[i];
+        cJSON* obj = cJSON_CreateObject();
         cJSON_AddStringToObject(obj, "title", p->title);
 
         /* Authors */
-        cJSON *auth_arr = cJSON_CreateArray();
+        cJSON* auth_arr = cJSON_CreateArray();
         for (int j = 0; j < p->authors_count; ++j)
-            cJSON_AddItemToArray(auth_arr,
-                cJSON_CreateString(p->authors[j]));
+            cJSON_AddItemToArray(auth_arr, cJSON_CreateString(p->authors[j]));
         cJSON_AddItemToObject(obj, "authors", auth_arr);
 
         cJSON_AddNumberToObject(obj, "year", p->year);
 
         /* Keywords */
-        cJSON *kw_arr = cJSON_CreateArray();
+        cJSON* kw_arr = cJSON_CreateArray();
         for (int j = 0; j < p->keyword_count; ++j)
-            cJSON_AddItemToArray(kw_arr,
-                cJSON_CreateString(p->keywords[j]));
+            cJSON_AddItemToArray(kw_arr, cJSON_CreateString(p->keywords[j]));
         cJSON_AddItemToObject(obj, "keywords", kw_arr);
 
         cJSON_AddStringToObject(obj, "abstract", p->abstract);
@@ -157,8 +160,8 @@ write_json(const PaperDatabase *db, GError **error)
         cJSON_AddItemToArray(root, obj);
     }
 
-    g_autofree char *text = cJSON_PrintUnformatted(root);
-    g_autofree GError *io_err = NULL;
+    g_autofree char* text = cJSON_PrintUnformatted(root);
+    g_autofree GError* io_err = NULL;
     if (!g_file_set_contents(db->path, text, strlen(text), &io_err)) {
         g_propagate_error(error, io_err);
         cJSON_Delete(root);
@@ -180,9 +183,8 @@ thread_write_json(gpointer data)
  * Launch write_json() in a background thread and detach.
  */
 void
-write_json_async(const PaperDatabase *db)
+write_json_async(const PaperDatabase* db)
 {
-    GThread *thr = g_thread_new("write-json", thread_write_json, (gpointer)db);
+    GThread* thr = g_thread_new("write-json", thread_write_json, (gpointer)db);
     g_thread_unref(thr);
 }
-

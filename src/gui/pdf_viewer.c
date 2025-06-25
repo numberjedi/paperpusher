@@ -226,18 +226,14 @@ on_pdf_scroll_event(GtkWidget* widget,
     (void)widget;
     PdfViewer* viewer = (PdfViewer*)user_data;
     GtkAdjustment* vadj = viewer->vadjustment;
-    //double val = gtk_adjustment_get_value(vadj);
     double step = gtk_adjustment_get_step_increment(vadj);
-    double page = gtk_adjustment_get_page_increment(vadj);
+    //double page = gtk_adjustment_get_page_increment(vadj);
 
     if (event->direction == GDK_SCROLL_UP)
-        //val -= step;
         pdf_viewer_scroll_by(-step);
     else if (event->direction == GDK_SCROLL_DOWN)
-        //val += step;
         pdf_viewer_scroll_by(step);
     else if (event->direction == GDK_SCROLL_SMOOTH && event->delta_y != 0.0)
-        //val += event->delta_y * step;
         pdf_viewer_scroll_by(event->delta_y * step);
 
     return TRUE;

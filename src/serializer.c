@@ -9,7 +9,6 @@
 #include <string.h>
 #include <sys/stat.h>
 
-
 /* Helper: append a length-prefixed string to a GByteArray */
 static void
 append_string_to_buffer(GByteArray* buffer, const char* s)
@@ -27,7 +26,6 @@ read_string_from_data(const guchar* data,
                       gsize* offset,
                       gchar** out)
 {
-    g_return_val_if_fail(data != NULL && offset != NULL && out != NULL, FALSE);
     if (*offset + sizeof(uint32_t) > length)
         return FALSE;
     uint32_t len;
@@ -55,8 +53,6 @@ cache_up_to_date(const char* json_path, const char* cache_path)
 bool
 write_cache(const PaperDatabase* db, GError** error)
 {
-    g_return_val_if_fail(db != NULL, FALSE);
-
     /* Build a binary buffer of cache contents */
     GByteArray* buffer = g_byte_array_new();
 /* Helper to append raw data */
@@ -113,7 +109,8 @@ load_cache_count(const PaperDatabase* db, GError** error)
     gsize length = 0;
     if (!g_file_get_contents(db->cache, &data, &length, error)) {
         // if cache is missing create empty cache file
-        if (error && *error && g_error_matches(*error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
+        if (error && *error &&
+            g_error_matches(*error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
             g_clear_error(error);
             g_file_set_contents(db->cache, "", 0, NULL);
             return 0;
@@ -137,10 +134,8 @@ load_cache(PaperDatabase* db, GError** error)
     gsize length = 0;
     if (!g_file_get_contents(db->cache, &data, &length, error)) {
         if (error && *error &&
-            g_error_matches(*error,
-                            G_FILE_ERROR,
-                            G_FILE_ERROR_NOENT)) {
-            //g_clear_error(error);
+            g_error_matches(*error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
+            // g_clear_error(error);
             /* Create empty cache file */
             g_file_set_contents(db->cache, "", 0, NULL);
             return FALSE;
@@ -224,17 +219,20 @@ load_cache(PaperDatabase* db, GError** error)
         gchar* pdf_file = NULL;
         read_string_from_data(blob, length, &offset, &pdf_file);
 
-        Paper* pobj = create_paper(title,
-                                   authors,
-                                   authors_count,
-                                   (int)year,
-                                   keywords,
-                                   keyword_count,
-                                   abstract,
-                                   arxiv_id,
-                                   doi,
-                                   pdf_file);
-        add_paper(db, pobj);
+        Paper* p = create_paper(db,
+                                title,
+                                authors,
+                                authors_count,
+                                (int)year,
+                                keywords,
+                                keyword_count,
+                                abstract,
+                                arxiv_id,
+                                doi,
+                                pdf_file,
+                                error);
+        if (!p)
+            return FALSE;
 
         /* Cleanup locals */
         g_free(title);
