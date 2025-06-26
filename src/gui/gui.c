@@ -39,8 +39,8 @@ on_search_changed(GtkEntry* entry, gpointer user_data)
 
     const char* q = gtk_entry_get_text(entry);
     const Paper* results[MAX_RESULTS];
-    int found =
-      search_papers((const Paper *const *)s_db->papers, s_db->count, q, results, MAX_RESULTS);
+    int found = search_papers(
+      (const Paper* const*)s_db->papers, s_db->count, q, results, MAX_RESULTS);
 
     gtk_list_box_unselect_all(results_list);
 
@@ -198,7 +198,7 @@ on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data)
  */
 static void
 parser_task_callback(PaperDatabase* db,
-                     Paper* p, // should I pass the paper id and reference through db instead?
+                     Paper* p, // pass paper id instead?
                      gpointer user_data,
                      GError* error)
 {
@@ -209,9 +209,9 @@ parser_task_callback(PaperDatabase* db,
 
     if (error) {
         gchar* pdf_file = NULL;
-        if (p && p->pdf_file) 
+        if (p && p->pdf_file)
             pdf_file = p->pdf_file;
-        else 
+        else
             pdf_file = "<N/A>";
 
         g_printerr(
@@ -225,7 +225,7 @@ parser_task_callback(PaperDatabase* db,
         g_printerr("Error parsing file, result is NULL.\n");
         return;
     }
-    // logic to update the progress bar goes here. 
+    // logic to update the progress bar goes here.
     // For now just print success message in the terminal.
     g_message("Successfully parsed '%s'.\n", p->pdf_file);
     // TODO: update progress bar
@@ -275,15 +275,18 @@ on_pdf_dropped(GtkWidget* widget,
     gtk_drag_finish(context, TRUE, FALSE, time);
 }
 
-/* --- Launch the GUI main loop --- */
+/* Launch the GUI main loop */
 void
-gui_run(PaperDatabase* db)
+gui_run(GtkApplication* app, PaperDatabase* db)
 {
     s_db = db;
 
     // load Glade UI
     GtkBuilder* b = gtk_builder_new_from_file("src/gui/main_window.ui");
     GtkWidget* w = GTK_WIDGET(gtk_builder_get_object(b, "main_window"));
+    gtk_window_set_application(GTK_WINDOW(w), app);
+
+    // setup PDF viewer
     pdf_viewer_setup(b, "pdf_scrollbar", "pdf_view");
 
     // grab widgets

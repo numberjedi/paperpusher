@@ -1,0 +1,4 @@
+leak:FcInit
+leak:FcFini
+leak:fontconfig
+leak:__libc_start_main

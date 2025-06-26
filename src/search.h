@@ -19,7 +19,11 @@ G_BEGIN_DECLS
  * @param max_results  Maximum size of the results array.
  * @return Number of results stored in 'results'.
  */
-gint search_papers(const Paper *const *papers, gint paper_count,
-                   const gchar *query, const Paper **results, gint max_results);
+gint
+search_papers(const Paper* const* papers,
+              gint paper_count,
+              const gchar* query,
+              const Paper** results,
+              gint max_results);
 
 G_END_DECLS

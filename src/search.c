@@ -21,8 +21,9 @@ tokenize_query(const gchar* query,
         while (*pointer && g_unichar_isspace(g_utf8_get_char(pointer)))
             pointer = g_utf8_next_char(pointer); // skip whitespace
         gint len = 0;
-        gint char_len =
-          g_utf8_validate(pointer, -1, NULL) ? g_utf8_next_char(pointer) - pointer : 1;
+        gint char_len = g_utf8_validate(pointer, -1, NULL)
+                          ? g_utf8_next_char(pointer) - pointer
+                          : 1;
         // get new utf8 char (breaks on '\0')
         while (*pointer && !g_unichar_isspace(g_utf8_get_char(pointer))) {
             if (len + char_len < MAX_KEYWORD_LEN - 1) { // enough space?

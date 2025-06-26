@@ -10,6 +10,7 @@
 /**
  * Read entire file at db->path into memory and parse JSON.
  * Populate db with the resulting Paper objects.
+ * TODO: use async task
  */
 bool
 load_papers_from_json(PaperDatabase* db, GError** error)
@@ -40,8 +41,8 @@ load_papers_from_json(PaperDatabase* db, GError** error)
         cJSON* item = cJSON_GetArrayItem(json, i);
 
         gchar* title = cJSON_IsString(cJSON_GetObjectItem(item, "title"))
-                               ? cJSON_GetObjectItem(item, "title")->valuestring
-                               : NULL;
+                         ? cJSON_GetObjectItem(item, "title")->valuestring
+                         : NULL;
 
         /* Authors array */
         cJSON* arr = cJSON_GetObjectItem(item, "authors");
@@ -73,34 +74,32 @@ load_papers_from_json(PaperDatabase* db, GError** error)
             }
         }
 
-        gchar* abstract =
-          cJSON_IsString(cJSON_GetObjectItem(item, "abstract"))
-            ? cJSON_GetObjectItem(item, "abstract")->valuestring
-            : NULL;
-        gchar* arxiv_id =
-          cJSON_IsString(cJSON_GetObjectItem(item, "arxiv_id"))
-            ? cJSON_GetObjectItem(item, "arxiv_id")->valuestring
-            : NULL;
+        gchar* abstract = cJSON_IsString(cJSON_GetObjectItem(item, "abstract"))
+                            ? cJSON_GetObjectItem(item, "abstract")->valuestring
+                            : NULL;
+        gchar* arxiv_id = cJSON_IsString(cJSON_GetObjectItem(item, "arxiv_id"))
+                            ? cJSON_GetObjectItem(item, "arxiv_id")->valuestring
+                            : NULL;
         gchar* doi = cJSON_IsString(cJSON_GetObjectItem(item, "doi"))
-                             ? cJSON_GetObjectItem(item, "doi")->valuestring
-                             : NULL;
+                       ? cJSON_GetObjectItem(item, "doi")->valuestring
+                       : NULL;
         const gchar* pdf_file =
           cJSON_IsString(cJSON_GetObjectItem(item, "pdf_file"))
             ? cJSON_GetObjectItem(item, "pdf_file")->valuestring
             : NULL;
 
         Paper* p = create_paper(db,
-                     title,
-                     authors,
-                     authors_count,
-                     year,
-                     keywords,
-                     kw_count,
-                     abstract,
-                     arxiv_id,
-                     doi,
-                     pdf_file,
-                     error);
+                                title,
+                                authors,
+                                authors_count,
+                                year,
+                                keywords,
+                                kw_count,
+                                abstract,
+                                arxiv_id,
+                                doi,
+                                pdf_file,
+                                error);
         if (!p)
             return FALSE;
 

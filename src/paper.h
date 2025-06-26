@@ -61,6 +61,17 @@ PaperDatabase*
 create_database(int initial_capacity, gchar* path, gchar* cache);
 
 /**
+ * Loads a PaperDatabase from the given json_path and cache_path into @db.
+ * On failure, returns FALSE. Handles errors internally.
+ * TODO: use async task
+ * TODO: maybe don't handle errors internally?
+ */
+gboolean
+load_database(PaperDatabase* db,
+              const gchar* json_path,
+              const gchar* cache_path);
+
+/**
  * Updates @paper with the given non-null parameters.
  */
 void

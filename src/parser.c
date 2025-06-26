@@ -1,6 +1,8 @@
 /* parser.c */
 #define _POSIX_C_SOURCE 200809L // for readlink()
 
+#define G_LOG_DOMAIN "parser"
+
 #include "parser.h"
 #include "cJSON/cJSON.h"
 #include "config.h"
@@ -66,7 +68,9 @@ find_paperparser_path(GError** error)
  * Returns TRUE on success, FALSE on error.
  */
 static gboolean
-run_paperparser_on_pdf(const gchar* pdf_path, gchar** stdout_buf, GError** error)
+run_paperparser_on_pdf(const gchar* pdf_path,
+                       gchar** stdout_buf,
+                       GError** error)
 {
     /* Find parser executable */
     g_autofree gchar* parser_path = find_paperparser_path(error);

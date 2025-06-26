@@ -44,7 +44,11 @@ TEST_LDFLAGS := $(LDFLAGS) $(CMOCKA_LDFLAGS)
 # build & run all test binaries
 test: $(TEST_BINS)
 	@echo "Running tests..."
-	@for bin in $^; do echo $$bin; ./$$bin; echo ""; done
+	@for bin in $^; do \
+		echo $$bin; \
+		LSAN_OPTIONS="suppressions=lsan.supp" ./$$bin; \
+		echo ""; \
+	done
 
 #compile each test binary with the app sources
 build/test_%: tests/%.c $(APP_SOURCES)

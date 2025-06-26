@@ -1,5 +1,8 @@
 #include "paper.h"
+#include "config.h"
 #include "glib.h"
+#include "loader.h"
+#include "serializer.h"
 
 static void
 add_paper(PaperDatabase* db, Paper* paper)
@@ -98,7 +101,6 @@ create_paper(PaperDatabase* db,
                  doi,
                  error);
 
-
     return p;
 }
 
@@ -118,6 +120,44 @@ create_database(int initial_capacity, gchar* db_path, gchar* db_cache)
     return db;
 }
 
+// TODO: shold this be async?
+gboolean
+load_database(PaperDatabase* db,
+              const gchar* json_path,
+              const gchar* cache_path)
+{
+    GError* error = NULL;
+
+    db->path = json_path ? g_strdup(json_path) : db->path;
+    db->cache = cache_path ? g_strdup(cache_path) : db->cache;
+
+    /* Load from cache or JSON file */
+    if (!cache_up_to_date(db->path, cache_path) || !load_cache(db, &error)) {
+        if (error) {
+            g_printerr(
+              "Error loading cache '%s': %s\n", cache_path, error->message);
+            g_clear_error(&error);
+        } else
+            g_printerr("Cache not up to date, attempting to load from JSON.\n");
+        if (!load_papers_from_json(db, &error)) {
+            g_printerr(
+              "Error loading JSON '%s': %s\nContinuing with empty database.\n",
+              json_path,
+              error->message);
+            g_clear_error(&error);
+        }
+    }
+
+    /* sync JSON and cache */
+    write_json_async(db);
+    if (!write_cache(db, &error)) {
+        g_printerr(
+          "Error writing cache '%s': %s\n", cache_path, error->message);
+        g_clear_error(&error);
+    }
+    return TRUE;
+}
+
 void
 update_paper(Paper* p,
              gchar* title,
@@ -132,10 +172,7 @@ update_paper(Paper* p,
              GError** error)
 {
     if (!p) {
-        g_set_error(error,
-                    G_FILE_ERROR,
-                    G_FILE_ERROR_INVAL,
-                    "Paper is NULL");
+        g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "Paper is NULL");
         return;
     }
     gchar* pdf_file = g_strdup(p->pdf_file);

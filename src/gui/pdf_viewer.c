@@ -227,7 +227,7 @@ on_pdf_scroll_event(GtkWidget* widget,
     PdfViewer* viewer = (PdfViewer*)user_data;
     GtkAdjustment* vadj = viewer->vadjustment;
     double step = gtk_adjustment_get_step_increment(vadj);
-    //double page = gtk_adjustment_get_page_increment(vadj);
+    // double page = gtk_adjustment_get_page_increment(vadj);
 
     if (event->direction == GDK_SCROLL_UP)
         pdf_viewer_scroll_by(-step);
@@ -239,6 +239,13 @@ on_pdf_scroll_event(GtkWidget* widget,
     return TRUE;
 }
 
+/**
+ * Sets up the PDF viewer, i.e. the drawing area and scrollbar.
+ *
+ * @param builder The GtkBuilder object containing the UI elements.
+ * @param scrollbar_id The ID of the scrollbar widget.
+ * @param drawing_area_id The ID of the drawing area widget.
+ */
 void
 pdf_viewer_setup(GtkBuilder* builder,
                  const gchar* scrollbar_id,
@@ -389,27 +396,32 @@ pdf_viewer_load(const gchar* filepath)
     gtk_adjustment_set_upper(vadj, doc_height);
     gtk_adjustment_set_page_size(vadj, viewport_height);
     gtk_adjustment_set_value(vadj, 0.0); // jump to top (optional)
-    gtk_adjustment_set_step_increment(vadj, g_pdf_viewer->page_height_px * 0.15);
-    gtk_adjustment_set_page_increment(vadj, g_pdf_viewer->page_height_px * 0.25);
+    gtk_adjustment_set_step_increment(vadj,
+                                      g_pdf_viewer->page_height_px * 0.15);
+    gtk_adjustment_set_page_increment(vadj,
+                                      g_pdf_viewer->page_height_px * 0.25);
     // gtk_adjustment_changed(vadj);
 
     gtk_widget_queue_draw(g_pdf_viewer->drawing_area);
 }
 
-void pdf_viewer_scroll_by(double amount) 
+void
+pdf_viewer_scroll_by(double amount)
 {
     if (!g_pdf_viewer || !g_pdf_viewer->vadjustment)
         return;
     GtkAdjustment* vadj = g_pdf_viewer->vadjustment;
     if (amount == 1.0 || amount == -1.0) {
-        double page = gtk_adjustment_get_page_increment(g_pdf_viewer->vadjustment);
+        double page =
+          gtk_adjustment_get_page_increment(g_pdf_viewer->vadjustment);
         amount = amount * page;
     }
     double val = gtk_adjustment_get_value(vadj);
     val += amount;
     if (val < gtk_adjustment_get_lower(vadj))
         val = gtk_adjustment_get_lower(vadj);
-    double max = gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj);
+    double max =
+      gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj);
     if (val > max)
         val = max;
     gtk_adjustment_set_value(vadj, val);
