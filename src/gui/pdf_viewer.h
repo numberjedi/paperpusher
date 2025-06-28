@@ -1,5 +1,6 @@
 #pragma once
 
+#include "loom.h"
 #include <glib.h>
 #include <gtk/gtk.h>
 #include <poppler.h>
@@ -15,7 +16,8 @@ typedef struct _PdfViewer PdfViewer;
  * automatically.
  */
 void
-pdf_viewer_setup(GtkBuilder* builder,
+pdf_viewer_setup(Loom* loom,
+                 GtkBuilder* builder,
                  const gchar* scrolled_window_id,
                  const gchar* drawing_area_id);
 

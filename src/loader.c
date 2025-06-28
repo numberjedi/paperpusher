@@ -1,4 +1,6 @@
 /* loader.c */
+#define G_LOG_DOMAIN "loader"
+
 #include "loader.h"
 #include "cJSON/cJSON.h"
 #include "paper.h"
@@ -6,6 +8,8 @@
 #include <gio/gio.h>
 #include <glib.h>
 #include <string.h>
+
+static GMutex json_mutex;
 
 /**
  * Read entire file at db->path into memory and parse JSON.
@@ -17,14 +21,20 @@ load_papers_from_json(PaperDatabase* db, GError** error)
 {
     g_return_val_if_fail(db != NULL, FALSE);
 
+
     g_autofree gchar* data = NULL;
     gsize length = 0;
     /* Read entire file into memory */
-    if (!g_file_get_contents(db->path, &data, &length, error))
+    g_mutex_lock(&json_mutex);
+    if (!g_file_get_contents(db->path, &data, &length, error)) {
+        g_mutex_unlock(&json_mutex);
         return FALSE;
+    }
+    g_mutex_unlock(&json_mutex);
 
-    if (length == 0)
+    if (length == 0) {
         return TRUE;
+    }
 
     cJSON* json = cJSON_Parse(data);
     if (!json) {
@@ -88,6 +98,7 @@ load_papers_from_json(PaperDatabase* db, GError** error)
             ? cJSON_GetObjectItem(item, "pdf_file")->valuestring
             : NULL;
 
+
         Paper* p = create_paper(db,
                                 title,
                                 authors,
@@ -100,8 +111,9 @@ load_papers_from_json(PaperDatabase* db, GError** error)
                                 doi,
                                 pdf_file,
                                 error);
-        if (!p)
+        if (!p) {
             return FALSE;
+        }
 
         /* Cleanup temporary arrays */
         if (authors) {
@@ -121,16 +133,21 @@ load_papers_from_json(PaperDatabase* db, GError** error)
 }
 
 /**
- * Synchronously write the database out as JSON to db->path.
+ * Write the database out as JSON to db->path.
  */
 bool
 write_json(const PaperDatabase* db, GError** error)
 {
     g_return_val_if_fail(db != NULL, FALSE);
+    g_message("Writing JSON to %s\n", db->path);
+
+    g_mutex_lock(&json_mutex);
+    g_rw_lock_reader_lock((GRWLock*)&db->lock);
 
     cJSON* root = cJSON_CreateArray();
     for (int i = 0; i < db->count; ++i) {
         const Paper* p = db->papers[i];
+        g_mutex_lock((GMutex*)&p->lock);
         cJSON* obj = cJSON_CreateObject();
         cJSON_AddStringToObject(obj, "title", p->title);
 
@@ -157,33 +174,38 @@ write_json(const PaperDatabase* db, GError** error)
             cJSON_AddStringToObject(obj, "pdf_file", p->pdf_file);
 
         cJSON_AddItemToArray(root, obj);
+        g_mutex_unlock((GMutex*)&p->lock);
     }
+    g_rw_lock_reader_unlock((GRWLock*)&db->lock);
 
     g_autofree char* text = cJSON_PrintUnformatted(root);
     g_autofree GError* io_err = NULL;
     if (!g_file_set_contents(db->path, text, strlen(text), &io_err)) {
         g_propagate_error(error, io_err);
         cJSON_Delete(root);
+        g_mutex_unlock(&json_mutex);
         return FALSE;
     }
     cJSON_Delete(root);
+    g_mutex_unlock(&json_mutex);
+    g_message("Successfully wrote JSON to %s\n", db->path);
     return TRUE;
 }
 
-/* Background thread: sync write_json() */
-static gpointer
-thread_write_json(gpointer data)
-{
-    write_json((const PaperDatabase*)data, NULL);
-    return NULL;
-}
-
-/**
- * Launch write_json() in a background thread and detach.
- */
-void
-write_json_async(const PaperDatabase* db)
-{
-    GThread* thr = g_thread_new("write-json", thread_write_json, (gpointer)db);
-    g_thread_unref(thr);
-}
+///* Background thread: sync write_json() */
+// static gpointer
+// thread_write_json(gpointer data)
+//{
+//     write_json((const PaperDatabase*)data, NULL);
+//     return NULL;
+// }
+//
+///**
+// * Launch write_json() in a background thread and detach.
+// */
+// void
+// write_json_async(const PaperDatabase* db)
+//{
+//    GThread* thr = g_thread_new("write-json", thread_write_json,
+//    (gpointer)db); g_thread_unref(thr);
+//}

@@ -1,7 +1,10 @@
+#define G_LOG_DOMAIN "pdf"
+
 #include "pdf_viewer.h"
 #include "cairo.h"
 #include "glib-object.h"
 #include "glibconfig.h"
+#include "loom.h"
 #include "poppler-document.h"
 #include "poppler-page.h"
 #include <glib.h>
@@ -27,6 +30,7 @@ struct _PdfViewer
 
     // cache
     GHashTable* page_cache; // keys: page numbers (gpointer), values: GdkPixbuf*
+    GHashTable* rendering_pages; // keys: page numbers (gpointer), values: dummy
 };
 
 typedef struct
@@ -35,12 +39,14 @@ typedef struct
     int dist;
 } PageDist;
 
-static PdfViewer* g_pdf_viewer = NULL;
+static PdfViewer* pdf_viewer = NULL;
+static Loom* gui_loom = NULL;
+static GMutex poppler_render_mutex;
 
 PdfViewer*
 pdf_viewer_get_global(void)
 {
-    return g_pdf_viewer;
+    return pdf_viewer;
 }
 
 static int
@@ -87,7 +93,128 @@ pdf_cache_trim(PdfViewer* viewer, int first, int last, int max_cache)
     g_list_free(keys);
 }
 
+typedef struct
+{
+    PopplerDocument* doc;
+    int page_num;
+    double scale;
+    double width_pts;
+    double height_pts;
+} RenderTaskData;
+
+/**
+ * Renders a page to a cairo surface.
+ * Returns a pointer to the surface on success, NULL on error.
+ */
+static gpointer
+render_page_shuttle(gpointer shuttle_data, GError** error)
+{
+    RenderTaskData* data = shuttle_data;
+
+    if (!data->doc) {
+        *error = g_error_new_literal(
+          G_IO_ERROR, G_IO_ERROR_FAILED, "Document is NULL");
+        return NULL;
+    }
+
+    // g_mutex_lock(&poppler_render_mutex);
+    PopplerPage* page = poppler_document_get_page(data->doc, data->page_num);
+    // g_mutex_unlock(&poppler_render_mutex);
+    if (!page) {
+        *error =
+          g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED, "Page not found");
+        return NULL;
+    }
+
+    int w = (int)(data->width_pts * data->scale + 0.5);
+    int h = (int)(data->height_pts * data->scale + 0.5);
+
+    cairo_surface_t* surface =
+      cairo_image_surface_create(CAIRO_FORMAT_RGB24, w, h);
+    cairo_t* cr = cairo_create(surface);
+
+    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+    cairo_paint(cr);
+    cairo_scale(cr, data->scale, data->scale);
+    g_mutex_lock(&poppler_render_mutex);
+    g_debug("poppler rendering page %d \n", data->page_num);
+    poppler_page_render(page, cr);
+    g_mutex_unlock(&poppler_render_mutex);
+
+    cairo_destroy(cr);
+    g_object_unref(page);
+
+    return surface;
+}
+
+/**
+ * Called when a page has been rendered.
+ * Inserts the surface into the page cache and redraws the widget.
+ */
+static void
+render_page_knot(gpointer knot_data,
+                 gpointer shuttle_data,
+                 gpointer result,
+                 GError* error)
+{
+    PdfViewer* viewer = knot_data;
+    RenderTaskData* data = shuttle_data;
+    // only insert into cache if the document hasn't changed
+    if (viewer->doc == data->doc && (!error || result)) {
+        cairo_surface_t* surface = result;
+
+        g_hash_table_insert(viewer->page_cache,
+                            GINT_TO_POINTER(data->page_num),
+                            surface); // takes ownership
+        // redraw
+        gtk_widget_queue_draw(viewer->drawing_area);
+        // mark as done
+        g_debug("marking page %d as done\n", data->page_num);
+        g_hash_table_remove(viewer->rendering_pages,
+                            GINT_TO_POINTER(data->page_num));
+    }
+
+    g_object_unref(data->doc);
+    g_free(data);
+}
+
+/**
+ * Pushes a page to the render queue.
+ */
+static void
+pdf_render_enqueue(PdfViewer* viewer, int page_num)
+{
+    // set rendering flag
+    g_hash_table_add(viewer->rendering_pages, GINT_TO_POINTER(page_num));
+    // retain document -- use mutex if needed
+    PopplerDocument* doc = viewer->doc;
+    if (!doc)
+        return;
+    g_object_ref(doc);
+
+    RenderTaskData* data = g_new0(RenderTaskData, 1);
+    data->doc = doc;
+    data->page_num = page_num;
+    data->scale = viewer->scale;
+    data->width_pts = viewer->page_width_pts;
+    data->height_pts = viewer->page_height_pts;
+
+    LoomThreadSpec spec = loom_thread_spec_default();
+    spec.tag = "pdf-page-render";
+    spec.priority = -1; // could vary this by distance to viewport
+    spec.shuttle = render_page_shuttle;
+    spec.shuttle_data = data;
+    spec.knot = render_page_knot;
+    spec.knot_data = viewer;
+    spec.is_lifo = TRUE;
+    static const gchar* deps[] = { "pdf-page-render", NULL };
+    spec.dependencies = deps;
+    // use gui_loom if default loom is busy
+    loom_queue_thread(gui_loom, &spec, NULL);
+}
+
 // Draw callback
+// TODO: make async
 static bool
 on_pdf_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data)
 {
@@ -95,6 +222,7 @@ on_pdf_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data)
     GtkAllocation alloc;
     gtk_widget_get_allocation(widget, &alloc);
 
+    // if nothing to draw, show a message
     if (!viewer || !viewer->doc || viewer->n_pages == 0) {
         const gchar* msg = "Select a PDF to preview it";
         PangoLayout* layout = gtk_widget_create_pango_layout(widget, msg);
@@ -145,38 +273,26 @@ on_pdf_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data)
                                 (GDestroyNotify)cairo_surface_destroy);
     }
 
-    // draw & cache all visible pages
+    // draw & cache all visible pages asynchronously
     for (int i = first_visible_page; i <= last_visible_page; ++i) {
         cairo_surface_t* surface =
           g_hash_table_lookup(viewer->page_cache, GINT_TO_POINTER(i));
+        // render page if not in cache or rendering
         if (!surface) {
-            PopplerPage* page = poppler_document_get_page(viewer->doc, i);
-            if (!page)
-                continue;
-            int w = (int)(viewer->page_width_pts * scale + 0.5);
-            int h = (int)(viewer->page_height_pts * scale + 0.5);
+            if (!g_hash_table_contains(viewer->rendering_pages,
+                                       GINT_TO_POINTER(i))) {
+                // push page to render queue
+                g_debug("pushing page %d to render queue\n", i);
+                pdf_render_enqueue(viewer, i);
+            }
+        } else { // if in cache, paint
+            double y_offset = i * page_height_px - scroll_y;
 
-            surface = cairo_image_surface_create(CAIRO_FORMAT_RGB24, w, h);
-            cairo_t* page_cr = cairo_create(surface);
-
-            cairo_set_source_rgb(page_cr, 1.0, 1.0, 1.0);
-            cairo_paint(page_cr);
-
-            cairo_scale(page_cr, scale, scale);
-            poppler_page_render(page, page_cr);
-            cairo_destroy(page_cr);
-            g_object_unref(page);
-
-            g_hash_table_insert(
-              viewer->page_cache, GINT_TO_POINTER(i), surface);
+            cairo_save(cr);
+            cairo_set_source_surface(cr, surface, 0, y_offset);
+            cairo_paint(cr);
+            cairo_restore(cr);
         }
-
-        double y_offset = i * page_height_px - scroll_y;
-
-        cairo_save(cr);
-        cairo_set_source_surface(cr, surface, 0, y_offset);
-        cairo_paint(cr);
-        cairo_restore(cr);
     }
 
     // trim cache if too big
@@ -247,10 +363,12 @@ on_pdf_scroll_event(GtkWidget* widget,
  * @param drawing_area_id The ID of the drawing area widget.
  */
 void
-pdf_viewer_setup(GtkBuilder* builder,
+pdf_viewer_setup(Loom* loom,
+                 GtkBuilder* builder,
                  const gchar* scrollbar_id,
                  const gchar* drawing_area_id)
 {
+    gui_loom = loom;
     GtkWidget* scrollbar =
       GTK_WIDGET(gtk_builder_get_object(builder, scrollbar_id));
     GtkWidget* area =
@@ -262,36 +380,38 @@ pdf_viewer_setup(GtkBuilder* builder,
       gtk_adjustment_new(0.0, 0.0, 1000.0, 20.0, 200.0, 200.0);
     gtk_range_set_adjustment(GTK_RANGE(scrollbar), vadj);
 
-    g_pdf_viewer = g_new0(PdfViewer, 1);
-    g_pdf_viewer->doc = NULL;
-    g_pdf_viewer->n_pages = 0;
-    g_pdf_viewer->page_width_pts = 0.0;
-    g_pdf_viewer->page_height_pts = 0.0;
-    g_pdf_viewer->scale = 1.0;
-    g_pdf_viewer->page_height_px = 0.0;
-    g_pdf_viewer->drawing_area = area;
-    g_pdf_viewer->vadjustment = vadj;
+    pdf_viewer = g_new0(PdfViewer, 1);
+    pdf_viewer->doc = NULL;
+    pdf_viewer->n_pages = 0;
+    pdf_viewer->page_width_pts = 0.0;
+    pdf_viewer->page_height_pts = 0.0;
+    pdf_viewer->scale = 1.0;
+    pdf_viewer->page_height_px = 0.0;
+    pdf_viewer->drawing_area = area;
+    pdf_viewer->vadjustment = vadj;
     // cache
-    g_pdf_viewer->page_cache =
+    pdf_viewer->page_cache =
       g_hash_table_new_full(g_direct_hash,
                             g_direct_equal,
                             NULL,
                             (GDestroyNotify)cairo_surface_destroy);
+    pdf_viewer->rendering_pages =
+      g_hash_table_new(g_direct_hash, g_direct_equal);
 
     gtk_widget_set_can_focus(area, TRUE);
     gtk_widget_add_events(area, GDK_SCROLL_MASK);
 
-    g_signal_connect(area, "draw", G_CALLBACK(on_pdf_draw), g_pdf_viewer);
+    g_signal_connect(area, "draw", G_CALLBACK(on_pdf_draw), pdf_viewer);
     g_signal_connect(
-      area, "size-allocate", G_CALLBACK(on_area_size_allocate), g_pdf_viewer);
+      area, "size-allocate", G_CALLBACK(on_area_size_allocate), pdf_viewer);
     // mouse scroll
     g_signal_connect(
-      area, "scroll-event", G_CALLBACK(on_pdf_scroll_event), g_pdf_viewer);
+      area, "scroll-event", G_CALLBACK(on_pdf_scroll_event), pdf_viewer);
     // redraw when scrolled
-    g_signal_connect(g_pdf_viewer->vadjustment,
+    g_signal_connect(pdf_viewer->vadjustment,
                      "value-changed",
                      G_CALLBACK(on_scroll_value_changed),
-                     g_pdf_viewer);
+                     pdf_viewer);
 }
 
 PdfViewer*
@@ -303,30 +423,34 @@ pdf_viewer_get(GtkWidget* drawing_area)
 void
 pdf_viewer_load(const gchar* filepath)
 {
-    if (!g_pdf_viewer)
+    if (!pdf_viewer)
         return;
 
     // Clean up previous doc/page
-    if (g_pdf_viewer->doc) {
-        g_object_unref(g_pdf_viewer->doc);
-        g_pdf_viewer->doc = NULL;
+    if (pdf_viewer->doc) {
+        g_object_unref(pdf_viewer->doc);
+        pdf_viewer->doc = NULL;
     }
-    if (g_pdf_viewer->page_cache) {
-        g_hash_table_destroy(g_pdf_viewer->page_cache);
-        g_pdf_viewer->page_cache = NULL;
+    if (pdf_viewer->page_cache) {
+        g_hash_table_destroy(pdf_viewer->page_cache);
+        pdf_viewer->page_cache = NULL;
+    }
+    if (pdf_viewer->rendering_pages) {
+        g_hash_table_destroy(pdf_viewer->rendering_pages);
+        pdf_viewer->rendering_pages = NULL;
     }
 
     // clean up cache
-    g_pdf_viewer->n_pages = 0;
-    g_pdf_viewer->page_width_pts = 0.0;
-    g_pdf_viewer->page_height_pts = 0.0;
-    g_pdf_viewer->scale = 1.0;
-    g_pdf_viewer->page_height_px = 0.0;
+    pdf_viewer->n_pages = 0;
+    pdf_viewer->page_width_pts = 0.0;
+    pdf_viewer->page_height_pts = 0.0;
+    pdf_viewer->scale = 1.0;
+    pdf_viewer->page_height_px = 0.0;
 
     if (!filepath) {
         gtk_widget_set_size_request(
-          g_pdf_viewer->drawing_area, -1, 0); // no doc loaded
-        gtk_widget_queue_draw(g_pdf_viewer->drawing_area);
+          pdf_viewer->drawing_area, -1, 0); // no doc loaded
+        gtk_widget_queue_draw(pdf_viewer->drawing_area);
         return;
     }
 
@@ -336,84 +460,89 @@ pdf_viewer_load(const gchar* filepath)
         g_warning("Invalid file path: %s", filepath);
         if (error)
             g_clear_error(&error);
-        gtk_widget_set_size_request(g_pdf_viewer->drawing_area, -1, 0);
-        gtk_widget_queue_draw(g_pdf_viewer->drawing_area);
+        gtk_widget_set_size_request(pdf_viewer->drawing_area, -1, 0);
+        gtk_widget_queue_draw(pdf_viewer->drawing_area);
         return;
     }
 
-    g_pdf_viewer->doc = poppler_document_new_from_file(uri, NULL, &error);
+    pdf_viewer->doc = poppler_document_new_from_file(uri, NULL, &error);
     g_free(uri);
 
-    if (!g_pdf_viewer->doc) {
+    if (!pdf_viewer->doc) {
         g_warning("Failed to open PDF '%s': %s",
                   filepath,
                   error ? error->message : "<unknown>");
         if (error)
             g_clear_error(&error);
-        gtk_widget_set_size_request(g_pdf_viewer->drawing_area, -1, 0);
-        gtk_widget_queue_draw(g_pdf_viewer->drawing_area);
+        gtk_widget_set_size_request(pdf_viewer->drawing_area, -1, 0);
+        gtk_widget_queue_draw(pdf_viewer->drawing_area);
         return;
     }
 
-    g_pdf_viewer->n_pages =
-      poppler_document_get_n_pages(g_pdf_viewer->doc); // page count
-    PopplerPage* page0 = poppler_document_get_page(g_pdf_viewer->doc, 0);
+    pdf_viewer->n_pages =
+      poppler_document_get_n_pages(pdf_viewer->doc); // page count
+    PopplerPage* page0 = poppler_document_get_page(pdf_viewer->doc, 0);
     if (!page0) {
         g_warning("PDF '%s' has no pages", filepath);
-        g_object_unref(g_pdf_viewer->doc);
-        g_pdf_viewer->doc = NULL;
-        g_pdf_viewer->n_pages = 0;
-        gtk_widget_set_size_request(g_pdf_viewer->drawing_area, -1, 0);
-        gtk_widget_queue_draw(g_pdf_viewer->drawing_area);
+        g_object_unref(pdf_viewer->doc);
+        pdf_viewer->doc = NULL;
+        pdf_viewer->n_pages = 0;
+        gtk_widget_set_size_request(pdf_viewer->drawing_area, -1, 0);
+        gtk_widget_queue_draw(pdf_viewer->drawing_area);
         return;
     }
 
     double pw_pts, ph_pts;
     poppler_page_get_size(page0, &pw_pts, &ph_pts);
-    g_pdf_viewer->page_width_pts = pw_pts;
-    g_pdf_viewer->page_height_pts = ph_pts;
+    pdf_viewer->page_width_pts = pw_pts;
+    pdf_viewer->page_height_pts = ph_pts;
     g_object_unref(page0);
 
     // determine scale for fit to width
-    int widget_width =
-      gtk_widget_get_allocated_width(g_pdf_viewer->drawing_area);
+    int widget_width = gtk_widget_get_allocated_width(pdf_viewer->drawing_area);
     // fallback to 800
     if (widget_width <= 1)
         widget_width = 800;
-    g_pdf_viewer->scale = widget_width / pw_pts;
-    g_pdf_viewer->page_height_px = ph_pts * g_pdf_viewer->scale;
+    pdf_viewer->scale = widget_width / pw_pts;
+    pdf_viewer->page_height_px = ph_pts * pdf_viewer->scale;
 
-    double doc_height = g_pdf_viewer->n_pages * g_pdf_viewer->page_height_px;
+    double doc_height = pdf_viewer->n_pages * pdf_viewer->page_height_px;
 
     // set drawing area height to viewport only
     int viewport_height =
-      gtk_widget_get_allocated_height(g_pdf_viewer->drawing_area);
+      gtk_widget_get_allocated_height(pdf_viewer->drawing_area);
     if (viewport_height < 1)
         viewport_height = 800;
 
     // Reset scroll position to top
-    GtkAdjustment* vadj = g_pdf_viewer->vadjustment;
+    GtkAdjustment* vadj = pdf_viewer->vadjustment;
     gtk_adjustment_set_upper(vadj, doc_height);
     gtk_adjustment_set_page_size(vadj, viewport_height);
     gtk_adjustment_set_value(vadj, 0.0); // jump to top (optional)
-    gtk_adjustment_set_step_increment(vadj,
-                                      g_pdf_viewer->page_height_px * 0.15);
-    gtk_adjustment_set_page_increment(vadj,
-                                      g_pdf_viewer->page_height_px * 0.25);
-    // gtk_adjustment_changed(vadj);
+    gtk_adjustment_set_step_increment(vadj, pdf_viewer->page_height_px * 0.15);
+    gtk_adjustment_set_page_increment(vadj, pdf_viewer->page_height_px * 0.25);
 
-    gtk_widget_queue_draw(g_pdf_viewer->drawing_area);
+    // re-init caches
+    pdf_viewer->page_cache =
+      g_hash_table_new_full(g_direct_hash,
+                            g_direct_equal,
+                            NULL,
+                            (GDestroyNotify)cairo_surface_destroy);
+    pdf_viewer->rendering_pages =
+      g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, NULL);
+
+    gtk_widget_queue_draw(pdf_viewer->drawing_area);
 }
 
 void
 pdf_viewer_scroll_by(double amount)
 {
-    if (!g_pdf_viewer || !g_pdf_viewer->vadjustment)
+    if (!pdf_viewer || !pdf_viewer->vadjustment)
         return;
-    GtkAdjustment* vadj = g_pdf_viewer->vadjustment;
+    GtkAdjustment* vadj = pdf_viewer->vadjustment;
     if (amount == 1.0 || amount == -1.0) {
         double page =
-          gtk_adjustment_get_page_increment(g_pdf_viewer->vadjustment);
+          gtk_adjustment_get_page_increment(pdf_viewer->vadjustment);
         amount = amount * page;
     }
     double val = gtk_adjustment_get_value(vadj);

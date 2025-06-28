@@ -1,4 +1,6 @@
 /* serializer.c */
+#define G_LOG_DOMAIN "serializer"
+
 #include "serializer.h"
 #include "paper.h"
 
@@ -8,6 +10,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+
+static GMutex cache_mutex;
 
 /* Helper: append a length-prefixed string to a GByteArray */
 static void
@@ -53,6 +57,8 @@ cache_up_to_date(const char* json_path, const char* cache_path)
 bool
 write_cache(const PaperDatabase* db, GError** error)
 {
+    g_message("Writing cache to %s\n", db->cache);
+    g_mutex_lock(&cache_mutex);
     /* Build a binary buffer of cache contents */
     GByteArray* buffer = g_byte_array_new();
 /* Helper to append raw data */
@@ -94,9 +100,12 @@ write_cache(const PaperDatabase* db, GError** error)
     if (!g_file_set_contents(
           db->cache, (const char*)buffer->data, buffer->len, error)) {
         g_byte_array_unref(buffer);
+        g_mutex_unlock(&cache_mutex);
         return FALSE;
     }
     g_byte_array_unref(buffer);
+    g_mutex_unlock(&cache_mutex);
+    g_message("Successfully wrote cache to %s\n", db->cache);
     return TRUE;
 }
 
@@ -104,6 +113,8 @@ int
 load_cache_count(const PaperDatabase* db, GError** error)
 {
     g_return_val_if_fail(db != NULL, 0);
+
+    g_mutex_lock(&cache_mutex);
 
     g_autofree gchar* data = NULL;
     gsize length = 0;
@@ -113,15 +124,20 @@ load_cache_count(const PaperDatabase* db, GError** error)
             g_error_matches(*error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
             g_clear_error(error);
             g_file_set_contents(db->cache, "", 0, NULL);
+            g_mutex_unlock(&cache_mutex);
             return 0;
         }
+        g_mutex_unlock(&cache_mutex);
         return 0;
     }
-    if (length < sizeof(uint32_t))
+    if (length < sizeof(uint32_t)) {
+        g_mutex_unlock(&cache_mutex);
         return 0;
+    }
 
     uint32_t count;
     memcpy(&count, data, sizeof(count));
+    g_mutex_unlock(&cache_mutex);
     return (int)count;
 }
 
@@ -130,6 +146,7 @@ load_cache(PaperDatabase* db, GError** error)
 {
     g_return_val_if_fail(db != NULL, FALSE);
 
+    g_mutex_lock(&cache_mutex);
     g_autofree gchar* data = NULL;
     gsize length = 0;
     if (!g_file_get_contents(db->cache, &data, &length, error)) {
@@ -138,9 +155,11 @@ load_cache(PaperDatabase* db, GError** error)
             // g_clear_error(error);
             /* Create empty cache file */
             g_file_set_contents(db->cache, "", 0, NULL);
+            g_mutex_unlock(&cache_mutex);
             return FALSE;
         }
         // g_file_get_contents() alredy set error for I/O
+        g_mutex_unlock(&cache_mutex);
         return FALSE;
     }
     if (length < sizeof(uint32_t)) {
@@ -150,6 +169,7 @@ load_cache(PaperDatabase* db, GError** error)
                     "Cache '%s' is too small (%zu bytes)",
                     db->cache,
                     length);
+        g_mutex_unlock(&cache_mutex);
         return FALSE;
     }
 
@@ -164,6 +184,7 @@ load_cache(PaperDatabase* db, GError** error)
                     G_FILE_ERROR,
                     G_FILE_ERROR_FAILED,
                     "Count is zero, nothing read.");
+        g_mutex_unlock(&cache_mutex);
         return FALSE;
     }
 
@@ -231,8 +252,10 @@ load_cache(PaperDatabase* db, GError** error)
                                 doi,
                                 pdf_file,
                                 error);
-        if (!p)
+        if (!p) {
+            g_mutex_unlock(&cache_mutex);
             return FALSE;
+        }
 
         /* Cleanup locals */
         g_free(title);
@@ -252,5 +275,6 @@ load_cache(PaperDatabase* db, GError** error)
         g_free(pdf_file);
     }
 
+    g_mutex_unlock(&cache_mutex);
     return TRUE;
 }

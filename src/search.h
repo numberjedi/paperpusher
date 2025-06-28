@@ -20,7 +20,7 @@ G_BEGIN_DECLS
  * @return Number of results stored in 'results'.
  */
 gint
-search_papers(const Paper* const* papers,
+search_papers(PaperDatabase* db,
               gint paper_count,
               const gchar* query,
               const Paper** results,

@@ -1,12 +1,12 @@
 /* parser.c */
 #define _POSIX_C_SOURCE 200809L // for readlink()
-
 #define G_LOG_DOMAIN "parser"
 
 #include "parser.h"
 #include "cJSON/cJSON.h"
 #include "config.h"
 #include "loader.h"
+#include "loom.h"
 #include "paper.h"
 #include "serializer.h"
 
@@ -19,7 +19,6 @@
 static gchar*
 get_str(cJSON* obj, const gchar* key)
 {
-    // g_return_val_if_fail(obj != NULL && key != NULL, NULL);
     cJSON* e = cJSON_GetObjectItem(obj, key);
     return (e && e->valuestring) ? e->valuestring : NULL;
 }
@@ -180,10 +179,12 @@ parser_run(PaperDatabase* db, const gchar* pdf_path, GError** error)
                     G_FILE_ERROR_FAILED,
                     "Failed to parse JSON at offset %d",
                     offset);
+        g_debug("%s\n", stdout_buf);
         return NULL;
     }
 
     cJSON* spans = cJSON_GetObjectItem(json, "predicted_spans");
+
     Paper* p = initialize_paper(db, pdf_path, error);
 
     /* Populate metadata */
@@ -193,8 +194,8 @@ parser_run(PaperDatabase* db, const gchar* pdf_path, GError** error)
         return NULL;
 
     /* Update database */
-    write_json_async(db);
-    write_cache(db, error);
+    // write_json_async(db);
+    // write_cache(db, error);
 
     return p;
 }
@@ -212,66 +213,52 @@ typedef struct
 } AsyncParserCallbackData;
 
 static void
-parser_task_callback(GObject* source_object,
-                     GAsyncResult* result,
-                     gpointer user_data)
+parser_task_callback(gpointer callback_data,
+                     gpointer worker_data,
+                     gpointer result,
+                     GError* error)
 {
-    (void)source_object;
-    GTask* task = G_TASK(result);
-    AsyncParserCallbackData* callback_data = user_data;
-    AsyncParserRunData* worker_data = g_task_get_task_data(task);
+    g_debug("parser_task_callback\n");
+    Paper* paper = result;
+    g_debug("paper title: %s\n", paper->title);
+    AsyncParserCallbackData* data = callback_data;
+    AsyncParserRunData* run_data = worker_data;
 
-    GError* error = NULL;
-    Paper* p = g_task_propagate_pointer(task, &error);
     PaperDatabase* db = NULL;
-    if (worker_data->db)
-        db = worker_data->db;
-    callback_data->callback(db, p, callback_data->user_data, error);
+    if (run_data->db)
+        db = run_data->db;
+    data->callback(db, paper, data->user_data, error);
 
-    // data->pdf_path was hard copied into p->pdf_file
-    // in initialize_paper(), so it needs to be freed here.
-    g_free(worker_data->pdf_path);
-    g_free(worker_data);
-    g_free(callback_data);
+    //// data->pdf_path was hard copied into p->pdf_file
+    //// in initialize_paper(), so it needs to be freed here.
+    g_free(run_data->pdf_path);
+    g_free(run_data);
+    g_free(data);
 }
 
-static void
-parser_task_worker(GTask* task,
-                   gpointer source_object,
-                   gpointer task_data,
-                   GCancellable* cancellable)
+static gpointer
+parser_task_worker(gpointer worker_data, GError** error)
 {
-    (void)source_object;
-    (void)cancellable;
-    (void)task_data;
-    AsyncParserRunData* data = g_task_get_task_data(task);
+    AsyncParserRunData* data = worker_data;
 
-    GError* error = NULL;
     if (!data) {
         g_set_error(
-          &error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "Task data is NULL");
-        g_task_return_error(task, error);
-        return;
+          error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "Task data is NULL");
+        return NULL;
     }
     if (!data->db) {
         g_set_error(
-          &error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "Database is NULL");
-        g_task_return_error(task, error);
-        return;
+          error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "Database is NULL");
+        return NULL;
     }
     if (!data->pdf_path) {
         g_set_error(
-          &error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "PDF path is NULL");
-        g_task_return_error(task, error);
-        return;
+          error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "PDF path is NULL");
+        return NULL;
     }
-    g_message("Parsing '%s'...", data->pdf_path);
-    Paper* p = parser_run(data->db, data->pdf_path, &error);
-    if (error) {
-        g_task_return_error(task, error);
-    }
-    g_task_return_pointer(task, p, NULL);
-    // GTask will free on its own, no need to g_object_unref(task)
+
+    Paper* p = parser_run(data->db, data->pdf_path, error);
+    return p;
 }
 
 /**
@@ -290,7 +277,14 @@ async_parser_run(PaperDatabase* db,
     callback_data->callback = callback;
     callback_data->user_data = user_data;
 
-    GTask* task = g_task_new(NULL, NULL, parser_task_callback, callback_data);
-    g_task_set_task_data(task, worker_data, NULL);
-    g_task_run_in_thread(task, parser_task_worker);
+    Loom* loom = loom_get_default();
+
+    LoomThreadSpec spec = loom_thread_spec_default();
+    spec.tag = "parser";
+    spec.shuttle = parser_task_worker;
+    spec.shuttle_data = worker_data;
+    spec.knot = parser_task_callback;
+    spec.knot_data = callback_data;
+
+    loom_queue_thread(loom, &spec, NULL);
 }

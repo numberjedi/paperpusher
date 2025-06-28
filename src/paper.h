@@ -15,6 +15,7 @@ typedef struct
     gchar* arxiv_id;
     gchar* doi;
     gchar* pdf_file;
+    GMutex lock;
     // gchar* hash; // TODO: add hash field for duplicate detection
 } Paper;
 
@@ -25,7 +26,30 @@ typedef struct
     gint capacity;
     gchar* path;
     gchar* cache;
+    GRWLock lock;
 } PaperDatabase;
+
+/* Macros */
+#define WITH_PAPER_LOCK(p, code_block)                                         \
+    do {                                                                       \
+        g_mutex_lock(&(p)->lock);                                              \
+        code_block;                                                            \
+        g_mutex_unlock(&(p)->lock);                                            \
+    } while (0)
+
+#define WITH_DB_WRITE_LOCK(db, code_block)                                     \
+    do {                                                                       \
+        g_rw_lock_writer_lock(&(db)->lock);                                    \
+        code_block;                                                            \
+        g_rw_lock_writer_unlock(&(db)->lock);                                  \
+    } while (0)
+
+#define WITH_DB_READ_LOCK(db, code_block)                                      \
+    do {                                                                       \
+        g_rw_lock_reader_lock(&(db)->lock);                                    \
+        code_block;                                                            \
+        g_rw_lock_reader_unlock(&(db)->lock);                                  \
+    } while (0)
 
 /**
  * Creates an empty Paper struct, adds it to @db,
@@ -70,6 +94,13 @@ gboolean
 load_database(PaperDatabase* db,
               const gchar* json_path,
               const gchar* cache_path);
+
+/**
+ * Asynchronously write the database out as JSON to db->path and cache to
+ * db->cache.
+ */
+void
+sync_json_and_cache(PaperDatabase* db);
 
 /**
  * Updates @paper with the given non-null parameters.

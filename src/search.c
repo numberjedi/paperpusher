@@ -1,3 +1,5 @@
+#define G_LOG_DOMAIN "search"
+
 #include "search.h"
 #include <glib.h>
 #include <stdbool.h>
@@ -123,7 +125,7 @@ compare_results(gconstpointer a, gconstpointer b)
  * search & rank by relevance to @query
  */
 gint
-search_papers(const Paper* const* papers,
+search_papers(PaperDatabase* db,
               gint paper_count,
               const gchar* query,
               const Paper** results,
@@ -135,27 +137,29 @@ search_papers(const Paper* const* papers,
     // growable ptr array to be cleaned up with g_free()
     // GPtrArray* array = g_ptr_array_new_with_free_func(g_free);
     GPtrArray* array = g_ptr_array_new();
+    gint limit = 0;
 
-    for (int i = 0; i < paper_count; ++i) {
-        gint score = score_paper(papers[i], keywords, kw_count);
-        if (score > 0) {
-            ScoredResult* sr = g_new(ScoredResult, 1);
-            sr->paper = papers[i];
-            sr->score = score;
-            g_ptr_array_add(array, sr); // christ, glib arrays are nice
+    WITH_DB_READ_LOCK(db, {
+        Paper** papers = db->papers;
+
+        for (int i = 0; i < paper_count; ++i) {
+            gint score = score_paper(papers[i], keywords, kw_count);
+            if (score > 0) {
+                ScoredResult* sr = g_new(ScoredResult, 1);
+                sr->paper = papers[i];
+                sr->score = score;
+                g_ptr_array_add(array, sr); // christ, glib arrays are nice
+            }
         }
-    }
 
-    g_ptr_array_sort(array, compare_results); // (wraps qsort)
-    gint limit =
-      MIN(array->len, (guint)max_results); // only return `limit` results
-    for (int i = 0; i < limit; ++i) {
-        ScoredResult* sr = g_ptr_array_index(array, i);
-        results[i] = sr->paper;
-    }
-
-    // g_ptr_array_free(array, TRUE); // clean up everything with the stored
-    // g_free
+        g_ptr_array_sort(array, compare_results); // (wraps qsort)
+        limit =
+          MIN(array->len, (guint)max_results); // only return `limit` results
+        for (int i = 0; i < limit; ++i) {
+            ScoredResult* sr = g_ptr_array_index(array, i);
+            results[i] = sr->paper;
+        }
+    });
 
     return limit;
 }

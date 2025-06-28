@@ -1,7 +1,8 @@
 #include "gui.h"
-#include "../parser.h"
-#include "../search.h"
-#include "gui/pdf_viewer.h"
+#include "loom.h"
+#include "parser.h"
+#include "search.h"
+#include "pdf_viewer.h"
 #include "paper.h"
 #include <gdk/gdkkeysyms.h>
 #include <gio/gio.h>
@@ -13,6 +14,7 @@
 
 /* App-global database reference (set in gui_run) */
 static PaperDatabase* s_db;
+static Loom* gui_loom;
 
 static GtkEntry* search_entry;
 static GtkListBox* results_list;
@@ -32,6 +34,7 @@ sanitize_label_text(const char* orig)
 }
 
 /* Search event: repopulate result list */
+// TODO: make this async?
 static void
 on_search_changed(GtkEntry* entry, gpointer user_data)
 {
@@ -40,7 +43,7 @@ on_search_changed(GtkEntry* entry, gpointer user_data)
     const char* q = gtk_entry_get_text(entry);
     const Paper* results[MAX_RESULTS];
     int found = search_papers(
-      (const Paper* const*)s_db->papers, s_db->count, q, results, MAX_RESULTS);
+      s_db, s_db->count, q, results, MAX_RESULTS);
 
     gtk_list_box_unselect_all(results_list);
 
@@ -215,7 +218,7 @@ parser_task_callback(PaperDatabase* db,
             pdf_file = "<N/A>";
 
         g_printerr(
-          "Error parsing PDF metadata for file: %s.\nError message: %s.",
+          "Error parsing PDF metadata for file: %s.\nError message: %s.\n",
           pdf_file,
           error->message);
         g_error_free(error);
@@ -227,7 +230,7 @@ parser_task_callback(PaperDatabase* db,
     }
     // logic to update the progress bar goes here.
     // For now just print success message in the terminal.
-    g_message("Successfully parsed '%s'.\n", p->pdf_file);
+    g_debug("Successfully parsed '%s'.\n", p->pdf_file);
     // TODO: update progress bar
 
     // (p is owned by the PaperDatabase now, do not free)
@@ -239,7 +242,7 @@ fire_parser_task(gchar* path)
 {
     if (!path)
         return;
-    g_print("Parsing '%s'...\n", path);
+    g_debug("Parsing '%s'...\n", path);
     async_parser_run(s_db, path, parser_task_callback, NULL);
 }
 
@@ -280,6 +283,9 @@ void
 gui_run(GtkApplication* app, PaperDatabase* db)
 {
     s_db = db;
+    //int max_threads = g_settings_get_int(app_flags.settings, "gui-threads");
+    int max_threads = MIN(4, g_get_num_processors() / 2);
+    gui_loom = loom_new(max_threads);
 
     // load Glade UI
     GtkBuilder* b = gtk_builder_new_from_file("src/gui/main_window.ui");
@@ -287,7 +293,7 @@ gui_run(GtkApplication* app, PaperDatabase* db)
     gtk_window_set_application(GTK_WINDOW(w), app);
 
     // setup PDF viewer
-    pdf_viewer_setup(b, "pdf_scrollbar", "pdf_view");
+    pdf_viewer_setup(gui_loom, b, "pdf_scrollbar", "pdf_view");
 
     // grab widgets
     search_entry = GTK_ENTRY(gtk_builder_get_object(b, "search_entry"));

@@ -2,6 +2,7 @@
 #include "config.h"
 #include "gio/gio.h"
 #include "gui/gui.h"
+#include "loom.h"
 #include "paper.h"
 #include <glib.h>
 #include <gtk/gtk.h>
@@ -21,6 +22,9 @@ on_activate(GApplication* app, gpointer user_data)
 {
     PaperDatabase* db = user_data;
 
+    // if HEADLESS_MODE
+    // run_headless(app, db);
+    // else
     gui_run(GTK_APPLICATION(app), db);
 }
 
@@ -68,9 +72,8 @@ on_command_line(GApplication* app,
                 // import_file(path);
             }
         }
-        return 0;
+        return -1;
     }
-
     g_application_activate(app);
     return 0;
 }

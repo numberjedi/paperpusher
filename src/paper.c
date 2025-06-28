@@ -1,41 +1,48 @@
+#define G_LOG_DOMAIN "paper"
+
 #include "paper.h"
 #include "config.h"
 #include "glib.h"
 #include "loader.h"
+#include "loom.h"
 #include "serializer.h"
 
 static void
 add_paper(PaperDatabase* db, Paper* paper)
 {
-    // printf("adding paper\n");
-    if (db->count >= db->capacity) {
-        // make sure it's not zero
-        db->capacity = (db->capacity < 1) ? 1 : db->capacity * 2;
-        db->papers = g_realloc(db->papers, sizeof(Paper*) * db->capacity);
-    }
-    db->count++;
-    paper->id_in_db = db->count - 1;
-    db->papers[paper->id_in_db] = paper;
+    g_debug("adding paper\n");
+    WITH_DB_WRITE_LOCK(db, {
+        if (db->count >= db->capacity) {
+            // make sure it's not zero
+            db->capacity = (db->capacity < 1) ? 1 : db->capacity * 2;
+            db->papers = g_realloc(db->papers, sizeof(Paper*) * db->capacity);
+        }
+        db->count++;
+        paper->id_in_db = db->count - 1;
+        db->papers[paper->id_in_db] = paper;
+    });
 }
 
 static void
 free_paper_fields(Paper* p)
 {
-    if (!p)
-        return;
-    g_free(p->title);
-    for (int i = 0; i < p->authors_count; i++) {
-        g_free(p->authors[i]);
-    }
-    g_free(p->authors);
-    for (int i = 0; i < p->keyword_count; i++) {
-        g_free(p->keywords[i]);
-    }
-    g_free(p->keywords);
-    g_free(p->abstract);
-    g_free(p->arxiv_id);
-    g_free(p->doi);
-    g_free(p->pdf_file);
+    WITH_PAPER_LOCK(p, {
+        if (!p)
+            return;
+        g_free(p->title);
+        for (int i = 0; i < p->authors_count; i++) {
+            g_free(p->authors[i]);
+        }
+        g_free(p->authors);
+        for (int i = 0; i < p->keyword_count; i++) {
+            g_free(p->keywords[i]);
+        }
+        g_free(p->keywords);
+        g_free(p->abstract);
+        g_free(p->arxiv_id);
+        g_free(p->doi);
+        g_free(p->pdf_file);
+    });
 }
 
 static void
@@ -44,7 +51,78 @@ free_paper(Paper* p)
     if (!p)
         return;
     free_paper_fields(p);
+    g_mutex_clear(&p->lock);
     g_free(p);
+}
+
+static gpointer
+write_json_shuttle(gpointer worker_data, GError** error)
+{
+    PaperDatabase* db = worker_data;
+    write_json(db, error);
+    return NULL;
+}
+
+static void
+write_json_knot(gpointer callback_data,
+                gpointer worker_data,
+                gpointer result,
+                GError* error)
+{
+    (void)callback_data;
+    (void)result;
+    (void)worker_data;
+    if (error) {
+        g_printerr("Error writing JSON: %s\n", error->message);
+        g_clear_error(&error);
+    }
+}
+
+static gpointer
+write_cache_shuttle(gpointer worker_data, GError** error)
+{
+    PaperDatabase* db = worker_data;
+    write_cache(db, error);
+    return NULL;
+}
+
+static void
+write_cache_knot(gpointer callback_data,
+                 gpointer worker_data,
+                 gpointer result,
+                 GError* error)
+{
+    (void)callback_data;
+    (void)result;
+    (void)worker_data;
+    if (error) {
+        g_printerr("Error writing cache: %s\n", error->message);
+        g_clear_error(&error);
+    }
+}
+
+void
+sync_json_and_cache(PaperDatabase* db)
+{
+    Loom* loom = loom_get_default();
+    LoomThreadSpec json_spec = loom_thread_spec_default();
+    json_spec.tag = "write-json";
+    json_spec.shuttle = write_json_shuttle;
+    json_spec.shuttle_data = db;
+    json_spec.knot = write_json_knot;
+    json_spec.priority = 5;
+
+    LoomThreadSpec cache_spec = loom_thread_spec_default();
+    cache_spec.tag = "write-cache";
+    cache_spec.shuttle = write_cache_shuttle;
+    cache_spec.shuttle_data = db;
+    cache_spec.knot = write_cache_knot;
+    cache_spec.priority = 5;
+    static const gchar* cache_deps[] = { "write-json", NULL };
+    cache_spec.dependencies = cache_deps;
+
+    loom_queue_thread(loom, &json_spec, NULL);
+    loom_queue_thread(loom, &cache_spec, NULL);
 }
 
 Paper*
@@ -57,20 +135,21 @@ initialize_paper(PaperDatabase* db, const gchar* pdf_file, GError** error)
                     "Database or pdf_file is NULL");
         return NULL;
     }
-    Paper* p = g_new0(Paper, 1);
+    Paper* paper = g_new0(Paper, 1);
     // this paper belongs to the database now
-    p->title = NULL;
-    p->authors = NULL;
-    p->authors_count = 0;
-    p->year = 0;
-    p->keyword_count = 0;
-    p->keywords = NULL;
-    p->abstract = NULL;
-    p->arxiv_id = NULL;
-    p->doi = NULL;
-    p->pdf_file = g_strdup(pdf_file);
-    add_paper(db, p);
-    return p;
+    paper->title = NULL;
+    paper->authors = NULL;
+    paper->authors_count = 0;
+    paper->year = 0;
+    paper->keyword_count = 0;
+    paper->keywords = NULL;
+    paper->abstract = NULL;
+    paper->arxiv_id = NULL;
+    paper->doi = NULL;
+    paper->pdf_file = g_strdup(pdf_file);
+    g_mutex_init(&paper->lock);
+    add_paper(db, paper);
+    return paper;
 }
 
 Paper*
@@ -116,6 +195,7 @@ create_database(int initial_capacity, gchar* db_path, gchar* db_cache)
     db->path = db_path;
     db->cache = db_cache;
     db->capacity = initial_capacity;
+    g_rw_lock_init(&db->lock);
 
     return db;
 }
@@ -128,17 +208,20 @@ load_database(PaperDatabase* db,
 {
     GError* error = NULL;
 
-    db->path = json_path ? g_strdup(json_path) : db->path;
-    db->cache = cache_path ? g_strdup(cache_path) : db->cache;
+    WITH_DB_WRITE_LOCK(db, {
+        db->path = json_path ? g_strdup(json_path) : db->path;
+        db->cache = cache_path ? g_strdup(cache_path) : db->cache;
+    });
 
     /* Load from cache or JSON file */
+    // TODO: async
     if (!cache_up_to_date(db->path, cache_path) || !load_cache(db, &error)) {
         if (error) {
             g_printerr(
               "Error loading cache '%s': %s\n", cache_path, error->message);
             g_clear_error(&error);
         } else
-            g_printerr("Cache not up to date, attempting to load from JSON.\n");
+            g_message("Cache not up to date, attempting to load from JSON.\n");
         if (!load_papers_from_json(db, &error)) {
             g_printerr(
               "Error loading JSON '%s': %s\nContinuing with empty database.\n",
@@ -149,17 +232,12 @@ load_database(PaperDatabase* db,
     }
 
     /* sync JSON and cache */
-    write_json_async(db);
-    if (!write_cache(db, &error)) {
-        g_printerr(
-          "Error writing cache '%s': %s\n", cache_path, error->message);
-        g_clear_error(&error);
-    }
+    sync_json_and_cache(db);
     return TRUE;
 }
 
 void
-update_paper(Paper* p,
+update_paper(Paper* paper,
              gchar* title,
              gchar** authors,
              gint authors_count,
@@ -171,41 +249,45 @@ update_paper(Paper* p,
              gchar* doi,
              GError** error)
 {
-    if (!p) {
+
+    if (!paper) {
         g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "Paper is NULL");
         return;
     }
-    gchar* pdf_file = g_strdup(p->pdf_file);
-    free_paper_fields(p);
 
-    p->title = title ? g_strdup(title) : NULL;
+    gchar* pdf_file = g_strdup(paper->pdf_file);
+    free_paper_fields(paper);
 
-    p->authors_count = (authors_count > 0) ? authors_count : 0;
-    if (p->authors_count > 0) {
-        p->authors = g_new0(gchar*, p->authors_count);
-        for (int i = 0; i < authors_count; i++) {
-            p->authors[i] = g_strdup(authors[i]);
+    WITH_PAPER_LOCK(paper, {
+        paper->title = title ? g_strdup(title) : NULL;
+
+        paper->authors_count = (authors_count > 0) ? authors_count : 0;
+        if (paper->authors_count > 0) {
+            paper->authors = g_new0(gchar*, paper->authors_count);
+            for (int i = 0; i < authors_count; i++) {
+                paper->authors[i] = g_strdup(authors[i]);
+            }
         }
-    }
 
-    p->year = year ? year : 0;
+        paper->year = year ? year : 0;
 
-    p->keyword_count = keyword_count ? keyword_count : 0;
-    p->keywords = NULL;
-    if (p->keyword_count > 0) {
-        p->keywords = g_new0(gchar*, p->keyword_count);
-        for (int i = 0; i < keyword_count; i++) {
-            p->keywords[i] = g_strdup(keywords[i]);
+        paper->keyword_count = keyword_count ? keyword_count : 0;
+        paper->keywords = NULL;
+        if (paper->keyword_count > 0) {
+            paper->keywords = g_new0(gchar*, paper->keyword_count);
+            for (int i = 0; i < keyword_count; i++) {
+                paper->keywords[i] = g_strdup(keywords[i]);
+            }
         }
-    }
 
-    p->abstract = abstract ? g_strdup(abstract) : NULL;
+        paper->abstract = abstract ? g_strdup(abstract) : NULL;
 
-    p->arxiv_id = arxiv_id ? g_strdup(arxiv_id) : NULL;
+        paper->arxiv_id = arxiv_id ? g_strdup(arxiv_id) : NULL;
 
-    p->doi = doi ? g_strdup(doi) : NULL;
+        paper->doi = doi ? g_strdup(doi) : NULL;
 
-    p->pdf_file = pdf_file;
+        paper->pdf_file = pdf_file;
+    });
 }
 
 void
@@ -215,11 +297,13 @@ remove_paper(PaperDatabase* db, Paper* paper)
         return;
     }
     // move last Paper in db to the spot of the removed one
-    db->papers[paper->id_in_db] = db->papers[db->count - 1];
-    db->papers[paper->id_in_db]->id_in_db = paper->id_in_db;
-    db->papers[db->count - 1] = NULL;
-    free_paper(paper);
-    db->count--;
+    WITH_DB_WRITE_LOCK(db, {
+        db->papers[paper->id_in_db] = db->papers[db->count - 1];
+        db->papers[paper->id_in_db]->id_in_db = paper->id_in_db;
+        db->papers[db->count - 1] = NULL;
+        free_paper(paper);
+        db->count--;
+    });
     return;
 }
 
@@ -228,11 +312,14 @@ free_database(PaperDatabase* db)
 {
     if (!db)
         return;
-    if (db->papers) {
-        for (int i = 0; i < db->count; i++) {
-            free_paper(db->papers[i]);
+    WITH_DB_WRITE_LOCK(db, {
+        if (db->papers) {
+            for (int i = 0; i < db->count; i++) {
+                free_paper(db->papers[i]);
+            }
+            g_free(db->papers);
         }
-        g_free(db->papers);
-    }
+    });
+    g_rw_lock_clear(&db->lock);
     g_free(db);
 }

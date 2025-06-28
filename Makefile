@@ -1,6 +1,6 @@
 CC = clang
 CFLAGS = -std=c99 -Wall -Wextra -I. -Isrc -g -O0 -fsanitize=address -fno-omit-frame-pointer
-#CFLAGS = -std=c99 -Wall -Wextra -I. -Isrc -g -O1
+#CFLAGS = -std=c99 -Wall -Wextra -I. -Isrc -g -O0
 LDFLAGS = -fsanitize=address
 #LDFLAGS =
 
