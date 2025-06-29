@@ -54,6 +54,7 @@ typedef struct
 /**
  * Creates an empty Paper struct, adds it to @db,
  * and returns a pointer to it.
+ * @db owns the returned Paper.
  */
 Paper*
 initialize_paper(PaperDatabase* db, const gchar* pdf_file, GError** error);
@@ -62,6 +63,7 @@ initialize_paper(PaperDatabase* db, const gchar* pdf_file, GError** error);
  * Creates a Paper struct with the given parameters, adds it to @db,
  * and returns a pointer to it.
  * On failure, returns NULL and sets *error accordingly.
+ * @db owns the returned Paper.
  */
 Paper*
 create_paper(PaperDatabase* db,
@@ -80,6 +82,7 @@ create_paper(PaperDatabase* db,
 /**
  * Creates a PaperDatabase struct with the given initial capacity, json path and
  * cache path, returns pointer to it.
+ * Caller takes ownership.
  */
 PaperDatabase*
 create_database(int initial_capacity, gchar* path, gchar* cache);

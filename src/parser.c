@@ -15,15 +15,18 @@
 #include <limits.h>
 #include <unistd.h>
 
-/* Helper: safely extract string from JSON or return NULL */
+/**
+ * Helper: safely extract string from JSON or return NULL 
+ * cJSON owns the returned string
+ */
 static gchar*
 get_str(cJSON* obj, const gchar* key)
 {
     cJSON* e = cJSON_GetObjectItem(obj, key);
-    return (e && e->valuestring) ? e->valuestring : NULL;
+    return (e && e->valuestring) ? e->valuestring : NULL; // freed by cJSON_Delete()
 }
 
-/* Locate the `paperparser` binary. On failure, set error */
+/* Locate the `paperparser` binary. On failure, set error. Caller owns the returned string. */
 static gchar*
 find_paperparser_path(GError** error)
 {
@@ -32,26 +35,27 @@ find_paperparser_path(GError** error)
     ssize_t len = readlink(SELF_EXE_PATH, exe_path, PATH_MAX);
     if (len >= 0) {
         exe_path[len] = '\0';
-        g_autofree gchar* app_dir = g_path_get_dirname(exe_path);
+        g_autofree gchar* app_dir = g_path_get_dirname(exe_path); // freed before function return
         gchar* candidate =
-          g_build_filename(app_dir, PAPERPARSER_REL_PATH, NULL);
+          g_build_filename(app_dir, PAPERPARSER_REL_PATH, NULL); // owned by caller
         if (g_file_test(candidate, G_FILE_TEST_IS_EXECUTABLE))
             return candidate;
         /* No executable here, try next */
         g_free(candidate);
     }
     /* 2) Environment override */
-    const gchar* envp = g_getenv(PAPERPARSER_ENVVAR);
+    const gchar* envp = g_getenv(PAPERPARSER_ENVVAR); // GLib owns this
     if (envp && *envp) {
-        gchar* candidate = g_strdup(envp);
+        gchar* candidate = g_strdup(envp); // owned by caller
         if (g_file_test(envp, G_FILE_TEST_IS_EXECUTABLE))
             return candidate;
         g_free(candidate);
     }
     /* 3) PATH lookup */
-    gchar* found = g_find_program_in_path(PAPERPARSER_EXE_NAME);
+    gchar* found = g_find_program_in_path(PAPERPARSER_EXE_NAME); // owned by caller
     if (found)
         return found;
+    g_free(found);
 
     /* If all attempts failed */
     g_set_error(error,
@@ -72,15 +76,15 @@ run_paperparser_on_pdf(const gchar* pdf_path,
                        GError** error)
 {
     /* Find parser executable */
-    g_autofree gchar* parser_path = find_paperparser_path(error);
+    g_autofree gchar* parser_path = find_paperparser_path(error); // freed before function return
     if (!parser_path)
-        return FALSE;
+        return FALSE; // caller handles error
 
     /* Spawn and capture JSON output */
-    g_autofree gchar* cmd = g_strdup_printf("%s '%s'", parser_path, pdf_path);
+    g_autofree gchar* cmd = g_strdup_printf("%s '%s'", parser_path, pdf_path); // freed before function return
     gint exit_status = 0;
     if (!g_spawn_command_line_sync(cmd, stdout_buf, NULL, &exit_status, error))
-        return FALSE;
+        return FALSE; // caller handles error
 
     if (exit_status != 0 || *stdout_buf == NULL) {
         if (!*error) {
@@ -90,7 +94,7 @@ run_paperparser_on_pdf(const gchar* pdf_path,
                         "paperparser failed (exit code %d)",
                         exit_status);
         }
-        return FALSE;
+        return FALSE; // caller handles error
     }
     return TRUE;
 }
@@ -124,7 +128,7 @@ populate_metadata(Paper* p, cJSON* spans, GError** error)
             title = text;
         } else if (g_strcmp0(entity, "AUTHOR") == 0) {
             /* Append author */
-            authors = g_realloc(authors, sizeof(gchar*) * (authors_count + 1));
+            authors = g_realloc(authors, sizeof(gchar*) * (authors_count + 1)); // freed before function return
             authors[authors_count++] = text;
         } else if (g_strcmp0(entity, "YEAR") == 0 && text) {
             year = atoi(text);
@@ -157,22 +161,22 @@ populate_metadata(Paper* p, cJSON* spans, GError** error)
 
 /**
  * Runs the external `paperparser` executable on @pdf_path,
- * parses the JSON output, creates a Paper from it and transfers
- * ownership of the Paper to @db.
+ * parses the JSON output, creates a Paper from it.
  * Returns a pointer to the Paper on success, NULL on error.
+ * @db owns the returned Paper.
  */
-Paper*
+static Paper*
 parser_run(PaperDatabase* db, const gchar* pdf_path, GError** error)
 {
     g_autofree gchar* stdout_buf = NULL;
-    run_paperparser_on_pdf(pdf_path, &stdout_buf, error);
+    run_paperparser_on_pdf(pdf_path, &stdout_buf, error); // freed before function return
     if (!stdout_buf)
-        return NULL;
+        return NULL; // caller handles error
 
     /* Parse JSON */
-    cJSON* json = cJSON_Parse(stdout_buf);
+    cJSON* json = cJSON_Parse(stdout_buf); // freed by cJSON_Delete() before function return
     if (!json) {
-        const char* errptr = cJSON_GetErrorPtr();
+        const char* errptr = cJSON_GetErrorPtr(); // owned by cJSON
         gint offset = errptr ? (gint)(errptr - stdout_buf) : -1;
         g_set_error(error,
                     G_FILE_ERROR,
@@ -180,22 +184,18 @@ parser_run(PaperDatabase* db, const gchar* pdf_path, GError** error)
                     "Failed to parse JSON at offset %d",
                     offset);
         g_debug("%s\n", stdout_buf);
-        return NULL;
+        return NULL; // caller handles error
     }
 
     cJSON* spans = cJSON_GetObjectItem(json, "predicted_spans");
 
-    Paper* p = initialize_paper(db, pdf_path, error);
+    Paper* p = initialize_paper(db, pdf_path, error); // owned by @db, freed by free_paper()
 
     /* Populate metadata */
     gboolean success = populate_metadata(p, spans, error);
     cJSON_Delete(json);
     if (!success || !p)
-        return NULL;
-
-    /* Update database */
-    // write_json_async(db);
-    // write_cache(db, error);
+        return NULL; // caller handles error
 
     return p;
 }
@@ -244,21 +244,21 @@ parser_task_worker(gpointer worker_data, GError** error)
     if (!data) {
         g_set_error(
           error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "Task data is NULL");
-        return NULL;
+        return NULL; // caller handles error
     }
     if (!data->db) {
         g_set_error(
           error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "Database is NULL");
-        return NULL;
+        return NULL; // caller handles error
     }
     if (!data->pdf_path) {
         g_set_error(
           error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "PDF path is NULL");
-        return NULL;
+        return NULL; // caller handles error
     }
 
     Paper* p = parser_run(data->db, data->pdf_path, error);
-    return p;
+    return p; // caller handles error
 }
 
 /**
@@ -270,10 +270,10 @@ async_parser_run(PaperDatabase* db,
                  void (*callback)(PaperDatabase*, Paper*, gpointer, GError*),
                  gpointer user_data)
 {
-    AsyncParserRunData* worker_data = g_new0(AsyncParserRunData, 1);
-    worker_data->pdf_path = pdf_path;
+    AsyncParserRunData* worker_data = g_new0(AsyncParserRunData, 1); // freed by callback
+    worker_data->pdf_path = pdf_path; // freed by callback (worker_data is not returned to *callback)
     worker_data->db = db;
-    AsyncParserCallbackData* callback_data = g_new0(AsyncParserCallbackData, 1);
+    AsyncParserCallbackData* callback_data = g_new0(AsyncParserCallbackData, 1); // freed by callback
     callback_data->callback = callback;
     callback_data->user_data = user_data;
 

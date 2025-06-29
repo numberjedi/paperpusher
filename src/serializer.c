@@ -38,7 +38,8 @@ read_string_from_data(const guchar* data,
     if (*offset + len > length)
         return FALSE;
     if (len > 0) {
-        *out = g_strndup((const gchar*)(data + *offset), len);
+        *out =
+          g_strndup((const gchar*)(data + *offset), len); // caller owns out
     } else {
         *out = NULL;
     }
@@ -57,10 +58,10 @@ cache_up_to_date(const char* json_path, const char* cache_path)
 bool
 write_cache(const PaperDatabase* db, GError** error)
 {
-    g_message("Writing cache to %s\n", db->cache);
+    g_debug("Writing cache to %s\n", db->cache);
     g_mutex_lock(&cache_mutex);
     /* Build a binary buffer of cache contents */
-    GByteArray* buffer = g_byte_array_new();
+    GByteArray* buffer = g_byte_array_new(); // freed before return
 /* Helper to append raw data */
 #define APPEND(data) g_byte_array_append(buffer, (guint8*)&(data), sizeof(data))
 
@@ -105,10 +106,14 @@ write_cache(const PaperDatabase* db, GError** error)
     }
     g_byte_array_unref(buffer);
     g_mutex_unlock(&cache_mutex);
-    g_message("Successfully wrote cache to %s\n", db->cache);
+    g_debug("Successfully wrote cache to %s\n", db->cache);
     return TRUE;
 }
 
+/**
+ * Count the number of entries in the cache file.
+ * Returns the number of entries on success, 0 on error.
+ */
 int
 load_cache_count(const PaperDatabase* db, GError** error)
 {
@@ -116,7 +121,7 @@ load_cache_count(const PaperDatabase* db, GError** error)
 
     g_mutex_lock(&cache_mutex);
 
-    g_autofree gchar* data = NULL;
+    g_autofree gchar* data = NULL; // freed on function return
     gsize length = 0;
     if (!g_file_get_contents(db->cache, &data, &length, error)) {
         // if cache is missing create empty cache file
@@ -130,13 +135,14 @@ load_cache_count(const PaperDatabase* db, GError** error)
         g_mutex_unlock(&cache_mutex);
         return 0;
     }
+    // check if file is too small
     if (length < sizeof(uint32_t)) {
         g_mutex_unlock(&cache_mutex);
         return 0;
     }
 
     uint32_t count;
-    memcpy(&count, data, sizeof(count));
+    memcpy(&count, data, sizeof(count)); // stack-allocated
     g_mutex_unlock(&cache_mutex);
     return (int)count;
 }
@@ -147,7 +153,7 @@ load_cache(PaperDatabase* db, GError** error)
     g_return_val_if_fail(db != NULL, FALSE);
 
     g_mutex_lock(&cache_mutex);
-    g_autofree gchar* data = NULL;
+    g_autofree gchar* data = NULL; // freed on function return
     gsize length = 0;
     if (!g_file_get_contents(db->cache, &data, &length, error)) {
         if (error && *error &&
@@ -176,6 +182,7 @@ load_cache(PaperDatabase* db, GError** error)
     const guchar* blob = (const guchar*)data;
     gsize offset = 0;
 
+    // walk through blob and read entries
     uint32_t count;
     memcpy(&count, blob + offset, sizeof(count));
     offset += sizeof(count);
@@ -196,7 +203,8 @@ load_cache(PaperDatabase* db, GError** error)
         offset += sizeof(year);
 
         gchar* title = NULL;
-        if (!read_string_from_data(blob, length, &offset, &title))
+        if (!read_string_from_data(
+              blob, length, &offset, &title)) // freed before return
             break;
 
         /* Authors */
@@ -208,9 +216,12 @@ load_cache(PaperDatabase* db, GError** error)
         int authors_count = (int)ac;
         gchar** authors = NULL;
         if (authors_count > 0) {
-            authors = g_new0(gchar*, authors_count);
+            authors = g_new0(gchar*, authors_count); // freed before return
             for (int j = 0; j < authors_count; ++j) {
-                if (!read_string_from_data(blob, length, &offset, &authors[j]))
+                if (!read_string_from_data(blob,
+                                           length,
+                                           &offset,
+                                           &authors[j])) // freed before return
                     break;
             }
         }
@@ -224,23 +235,30 @@ load_cache(PaperDatabase* db, GError** error)
         int keyword_count = (int)kc;
         gchar** keywords = NULL;
         if (keyword_count > 0) {
-            keywords = g_new0(gchar*, keyword_count);
+            keywords = g_new0(gchar*, keyword_count); // freed before return
             for (int j = 0; j < keyword_count; ++j) {
-                if (!read_string_from_data(blob, length, &offset, &keywords[j]))
+                if (!read_string_from_data(blob,
+                                           length,
+                                           &offset,
+                                           &keywords[j])) // freed before return
                     break;
             }
         }
 
         gchar* abstract = NULL;
-        read_string_from_data(blob, length, &offset, &abstract);
+        read_string_from_data(
+          blob, length, &offset, &abstract); // freed before return
         gchar* arxiv_id = NULL;
-        read_string_from_data(blob, length, &offset, &arxiv_id);
+        read_string_from_data(
+          blob, length, &offset, &arxiv_id); // freed before return
         gchar* doi = NULL;
-        read_string_from_data(blob, length, &offset, &doi);
+        read_string_from_data(
+          blob, length, &offset, &doi); // freed before return
         gchar* pdf_file = NULL;
-        read_string_from_data(blob, length, &offset, &pdf_file);
+        read_string_from_data(
+          blob, length, &offset, &pdf_file); // freed before return
 
-        Paper* p = create_paper(db,
+        Paper* p = create_paper(db, // hard copies values, so need free all
                                 title,
                                 authors,
                                 authors_count,
@@ -252,11 +270,7 @@ load_cache(PaperDatabase* db, GError** error)
                                 doi,
                                 pdf_file,
                                 error);
-        if (!p) {
-            g_mutex_unlock(&cache_mutex);
-            return FALSE;
-        }
-
+        // TODO: handle corrupted cache
         /* Cleanup locals */
         g_free(title);
         if (authors) {
@@ -273,6 +287,12 @@ load_cache(PaperDatabase* db, GError** error)
         g_free(arxiv_id);
         g_free(doi);
         g_free(pdf_file);
+
+        if (!p) {
+            g_mutex_unlock(&cache_mutex);
+            return FALSE;
+        }
+
     }
 
     g_mutex_unlock(&cache_mutex);

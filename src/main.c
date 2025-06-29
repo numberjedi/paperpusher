@@ -90,11 +90,11 @@ on_startup(GApplication* app, gpointer user_data)
 int
 main(int argc, char** argv)
 {
-    PaperDatabase* db = create_database(1, JSON_PATH, CACHE_PATH);
+    PaperDatabase* db = create_database(1, JSON_PATH, CACHE_PATH); // freed before function return
 
     GApplicationFlags flags = G_APPLICATION_HANDLES_COMMAND_LINE;
     GtkApplication* app =
-      gtk_application_new("com.numberjedi.paperpusher", flags);
+      gtk_application_new("com.numberjedi.paperpusher", flags); // freed before function return
 
     g_signal_connect(app, "startup", G_CALLBACK(on_startup), NULL);
     g_signal_connect(app, "command-line", G_CALLBACK(on_command_line), db);

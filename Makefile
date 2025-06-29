@@ -1,8 +1,17 @@
 CC = clang
-CFLAGS = -std=c99 -Wall -Wextra -I. -Isrc -g -O0 -fsanitize=address -fno-omit-frame-pointer
-#CFLAGS = -std=c99 -Wall -Wextra -I. -Isrc -g -O0
-LDFLAGS = -fsanitize=address
-#LDFLAGS =
+# default to prod flags
+CFLAGS = -std=c99 -Wall -Wextra -I. -Isrc -O3
+LDFLAGS =
+# check for "asan" arg and add debug flags if set
+ifeq ($(MAKECMDGOALS),asan)
+	CFLAGS += -g -O0 -fsanitize=address,leak,undefined -fno-omit-frame-pointer
+	LDFLAGS += -fsanitize=address,leak,undefined 
+endif
+# check for "lsan" arg and add debug flags if set
+ifeq ($(MAKECMDGOALS),gdb)
+	CFLAGS += -g -O0 -fno-omit-frame-pointer
+	LDFLAGS +=
+endif
 
 PKG_CFLAGS  := $(shell pkg-config --cflags gtk+-3.0 poppler-glib)
 PKG_LIBS    := $(shell pkg-config --libs gtk+-3.0 poppler-glib)
@@ -20,6 +29,10 @@ TEST_BINS = $(patsubst tests/%.c, build/test_%, $(TEST_SOURCES))
 TARGET = paperpusher
 
 all: $(TARGET)
+
+asan: $(TARGET)
+
+gdb: $(TARGET)
 
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)
@@ -58,5 +71,5 @@ build/test_%: tests/%.c $(APP_SOURCES)
 clean:
 	rm -f $(OBJECTS) $(TARGET)
 
-.PHONY: all clean
+.PHONY: all clean asan gdb
 

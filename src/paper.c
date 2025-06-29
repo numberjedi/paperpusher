@@ -15,7 +15,9 @@ add_paper(PaperDatabase* db, Paper* paper)
         if (db->count >= db->capacity) {
             // make sure it's not zero
             db->capacity = (db->capacity < 1) ? 1 : db->capacity * 2;
-            db->papers = g_realloc(db->papers, sizeof(Paper*) * db->capacity);
+            db->papers = g_realloc(db->papers,
+                                   sizeof(Paper*) *
+                                     db->capacity); // freed by free_database()
         }
         db->count++;
         paper->id_in_db = db->count - 1;
@@ -135,8 +137,7 @@ initialize_paper(PaperDatabase* db, const gchar* pdf_file, GError** error)
                     "Database or pdf_file is NULL");
         return NULL;
     }
-    Paper* paper = g_new0(Paper, 1);
-    // this paper belongs to the database now
+    Paper* paper = g_new0(Paper, 1); // freed by free_paper()
     paper->title = NULL;
     paper->authors = NULL;
     paper->authors_count = 0;
@@ -147,8 +148,9 @@ initialize_paper(PaperDatabase* db, const gchar* pdf_file, GError** error)
     paper->arxiv_id = NULL;
     paper->doi = NULL;
     paper->pdf_file = g_strdup(pdf_file);
-    g_mutex_init(&paper->lock);
+    g_mutex_init(&paper->lock); // freed by free_paper()
     add_paper(db, paper);
+    // Paper belongs to the database now
     return paper;
 }
 
@@ -189,13 +191,13 @@ create_database(int initial_capacity, gchar* db_path, gchar* db_cache)
     if (initial_capacity < 1)
         initial_capacity = 1;
 
-    PaperDatabase* db = g_new0(PaperDatabase, 1);
-    db->papers = g_new0(Paper*, initial_capacity);
+    PaperDatabase* db = g_new0(PaperDatabase, 1);  // freed by free_database()
+    db->papers = g_new0(Paper*, initial_capacity); // freed by free_database()
     db->count = 0;
-    db->path = db_path;
-    db->cache = db_cache;
+    db->path = g_strdup(db_path);   // freed by free_database()
+    db->cache = g_strdup(db_cache); // freed by free_database()
     db->capacity = initial_capacity;
-    g_rw_lock_init(&db->lock);
+    g_rw_lock_init(&db->lock); // freed by free_database()
 
     return db;
 }
@@ -209,13 +211,13 @@ load_database(PaperDatabase* db,
     GError* error = NULL;
 
     WITH_DB_WRITE_LOCK(db, {
-        db->path = json_path ? g_strdup(json_path) : db->path;
-        db->cache = cache_path ? g_strdup(cache_path) : db->cache;
+        db->path = json_path ? g_strdup(json_path) : db->path; // freed by free_database()
+        db->cache = cache_path ? g_strdup(cache_path) : db->cache; // freed by free_database()
     });
 
     /* Load from cache or JSON file */
     // TODO: async
-    if (!cache_up_to_date(db->path, cache_path) || !load_cache(db, &error)) {
+    if (!cache_up_to_date(db->path, db->cache) || !load_cache(db, &error)) {
         if (error) {
             g_printerr(
               "Error loading cache '%s': %s\n", cache_path, error->message);
@@ -249,12 +251,13 @@ update_paper(Paper* paper,
              gchar* doi,
              GError** error)
 {
-
+    // TODO: handle error
     if (!paper) {
         g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "Paper is NULL");
         return;
     }
 
+    // all freed by free_paper()
     gchar* pdf_file = g_strdup(paper->pdf_file);
     free_paper_fields(paper);
 
@@ -320,6 +323,8 @@ free_database(PaperDatabase* db)
             g_free(db->papers);
         }
     });
+    g_free(db->path);
+    g_free(db->cache);
     g_rw_lock_clear(&db->lock);
     g_free(db);
 }

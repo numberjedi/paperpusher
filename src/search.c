@@ -13,7 +13,8 @@ static gint
 tokenize_query(const gchar* query,
                gchar keywords[MAX_KEYWORDS][MAX_KEYWORD_LEN])
 {
-    g_autofree gchar* lower_query = g_utf8_strdown(query, -1);
+    g_autofree gchar* lower_query =
+      g_utf8_strdown(query, -1); // freed on function return
     gint count = 0;
     const gchar* pointer = lower_query;
 
@@ -29,7 +30,7 @@ tokenize_query(const gchar* query,
         // get new utf8 char (breaks on '\0')
         while (*pointer && !g_unichar_isspace(g_utf8_get_char(pointer))) {
             if (len + char_len < MAX_KEYWORD_LEN - 1) { // enough space?
-                memcpy(&keywords[count][len],
+                memcpy(&keywords[count][len],           // lives on stack
                        pointer,
                        char_len); // copy bytes of utf8 char into keyword
                 len += char_len;
@@ -56,7 +57,8 @@ contains_keyword(const gchar* field, const gchar* keyword)
     if (!field || !keyword)
         return FALSE;
 
-    g_autofree gchar* lower_field = g_utf8_strdown(field, -1);
+    g_autofree gchar* lower_field =
+      g_utf8_strdown(field, -1); // freed on function return
     bool found = strstr(lower_field, keyword) != NULL;
     return found;
 }
@@ -134,18 +136,17 @@ search_papers(PaperDatabase* db,
     gchar keywords[MAX_KEYWORDS][MAX_KEYWORD_LEN];
     gint kw_count = tokenize_query(query, keywords);
 
-    // growable ptr array to be cleaned up with g_free()
-    // GPtrArray* array = g_ptr_array_new_with_free_func(g_free);
-    GPtrArray* array = g_ptr_array_new();
+    // growable ptr array to be auto cleaned up with g_free()
+    GPtrArray* array = g_ptr_array_new_with_free_func(g_free);
     gint limit = 0;
 
-    WITH_DB_READ_LOCK(db, {
+    //WITH_DB_READ_LOCK(db, {
         Paper** papers = db->papers;
 
         for (int i = 0; i < paper_count; ++i) {
             gint score = score_paper(papers[i], keywords, kw_count);
             if (score > 0) {
-                ScoredResult* sr = g_new(ScoredResult, 1);
+                ScoredResult* sr = g_new(ScoredResult, 1); // freed before return
                 sr->paper = papers[i];
                 sr->score = score;
                 g_ptr_array_add(array, sr); // christ, glib arrays are nice
@@ -159,7 +160,9 @@ search_papers(PaperDatabase* db,
             ScoredResult* sr = g_ptr_array_index(array, i);
             results[i] = sr->paper;
         }
-    });
+    //});
+
+    g_ptr_array_free(array, TRUE); // free the array and the ScoredResults
 
     return limit;
 }

@@ -17,9 +17,15 @@ typedef struct _PdfViewer PdfViewer;
  */
 void
 pdf_viewer_setup(Loom* loom,
+                 GtkApplication* app,
                  GtkBuilder* builder,
                  const gchar* scrolled_window_id,
                  const gchar* drawing_area_id);
+/**
+ * Frees the PdfViewer object and all its resources.
+ */
+void
+pdf_viewer_destroy(GApplication* app, gpointer user_data);
 
 /**
  * Load the first page of the PDF at filepath into the viewer.

@@ -1,9 +1,9 @@
 #include "gui.h"
 #include "loom.h"
-#include "parser.h"
-#include "search.h"
-#include "pdf_viewer.h"
 #include "paper.h"
+#include "parser.h"
+#include "pdf_viewer.h"
+#include "search.h"
 #include <gdk/gdkkeysyms.h>
 #include <gio/gio.h>
 #include <glib.h>
@@ -20,7 +20,16 @@ static GtkEntry* search_entry;
 static GtkListBox* results_list;
 static GtkLabel* pdf_preview;
 
-/* Forward declarations */
+/**
+ * disassemble Loom object when app is shutting down
+ */
+static void
+on_shutdown(GApplication* app, gpointer user_data)
+{
+    (void)app;
+    (void)user_data;
+    loom_disassemble(gui_loom);
+}
 
 /* ensure label text is valid UTF-8 */
 static gchar*
@@ -40,51 +49,59 @@ on_search_changed(GtkEntry* entry, gpointer user_data)
 {
     (void)user_data;
 
-    const char* q = gtk_entry_get_text(entry);
+    const char* q = gtk_entry_get_text(entry); // owned by widget
     const Paper* results[MAX_RESULTS];
-    int found = search_papers(
-      s_db, s_db->count, q, results, MAX_RESULTS);
+    int found = search_papers(s_db, s_db->count, q, results, MAX_RESULTS);
 
     gtk_list_box_unselect_all(results_list);
 
-    GList* children = gtk_container_get_children(GTK_CONTAINER(results_list));
+    GList* children = gtk_container_get_children(
+      GTK_CONTAINER(results_list)); // freed before return
+    // clear old results
     for (GList* c = children; c; c = c->next)
         gtk_widget_destroy(GTK_WIDGET(c->data));
     g_list_free(children);
 
+    // add new results
     for (int i = 0; i < found; ++i) {
         Paper* p = (Paper*)results[i];
-        GtkWidget* row = gtk_list_box_row_new();
+        GtkWidget* row = gtk_list_box_row_new(); // owned by box
 
         // vbox
         GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-        gtk_container_add(GTK_CONTAINER(row), vbox);
+        gtk_container_add(GTK_CONTAINER(row), vbox); // vbox ownewd by row now
 
         // title
-        gchar* safe_title = sanitize_label_text(p->title);
+        gchar* safe_title =
+          sanitize_label_text(p->title); // freed before return
         GtkWidget* title = gtk_label_new(safe_title);
         g_free(safe_title);
         gtk_label_set_xalign(GTK_LABEL(title), 0.0);
         gtk_label_set_ellipsize(GTK_LABEL(title), PANGO_ELLIPSIZE_END);
         gtk_widget_set_hexpand(title, TRUE);
-        gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, TRUE, 0);
+        gtk_box_pack_start(
+          GTK_BOX(vbox), title, FALSE, TRUE, 0); // title owned by vbox now
 
         // hbox
         GtkWidget* hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
         gtk_widget_set_hexpand(hbox, TRUE);
-        gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, TRUE, 0);
+        gtk_box_pack_start(
+          GTK_BOX(vbox), hbox, FALSE, TRUE, 0); // hbox owned by vbox now
 
         // authors
-        GString* safe_authors_string = g_string_new(NULL);
+        GString* safe_authors_string =
+          g_string_new(NULL); // freed before return
         for (int j = 0; j < p->authors_count; j++) {
-            gchar* safe_author = sanitize_label_text(p->authors[j]);
-            g_string_append(safe_authors_string, safe_author);
+            gchar* safe_author =
+              sanitize_label_text(p->authors[j]); // freed before return
+            g_string_append(safe_authors_string, safe_author); // epic
             g_free(safe_author);
         }
         GtkWidget* authors = gtk_label_new(safe_authors_string->str);
         gtk_label_set_xalign(GTK_LABEL(authors), 0.0);
         gtk_label_set_ellipsize(GTK_LABEL(authors), PANGO_ELLIPSIZE_END);
-        gtk_box_pack_start(GTK_BOX(hbox), authors, FALSE, FALSE, 0);
+        gtk_box_pack_start(
+          GTK_BOX(hbox), authors, FALSE, FALSE, 0); // authors owned by hbox now
         g_string_free(safe_authors_string, TRUE);
 
         // year
@@ -92,7 +109,8 @@ on_search_changed(GtkEntry* entry, gpointer user_data)
         snprintf(yearbuf, sizeof(yearbuf), "(%d)", p->year);
         GtkWidget* year = gtk_label_new(yearbuf);
         gtk_label_set_xalign(GTK_LABEL(year), 0.0);
-        gtk_box_pack_start(GTK_BOX(hbox), year, TRUE, TRUE, 0);
+        gtk_box_pack_start(
+          GTK_BOX(hbox), year, TRUE, TRUE, 0); // year owned by hbox now
 
         g_object_set_data(G_OBJECT(row), "paper", p);
 
@@ -101,7 +119,8 @@ on_search_changed(GtkEntry* entry, gpointer user_data)
     }
 
     if (found > 0) {
-        GtkListBoxRow* first = gtk_list_box_get_row_at_index(results_list, 0);
+        GtkListBoxRow* first =
+          gtk_list_box_get_row_at_index(results_list, 0); // owned by box
         gtk_list_box_select_row(results_list, first);
     }
     gtk_widget_show_all(GTK_WIDGET(results_list));
@@ -118,7 +137,7 @@ on_results_row_selected(GtkListBox* box, GtkListBoxRow* row, gpointer user_data)
         pdf_viewer_load(NULL);
         return;
     }
-    Paper* p = g_object_get_data(G_OBJECT(row), "paper");
+    Paper* p = g_object_get_data(G_OBJECT(row), "paper"); // (owned by db)
     pdf_viewer_load(p->pdf_file);
 }
 
@@ -126,15 +145,16 @@ on_results_row_selected(GtkListBox* box, GtkListBoxRow* row, gpointer user_data)
 static GtkListBoxRow*
 get_adjacent_row(GtkListBox* box, GtkListBoxRow* row, gboolean next)
 {
-    GList* children = gtk_container_get_children(GTK_CONTAINER(box));
+    GList* children =
+      gtk_container_get_children(GTK_CONTAINER(box)); // freed before return
     GtkListBoxRow* res = NULL;
     if (!row) {
         // no current selection. pick fist (or last if prev)
         if (children) {
             if (next)
-                res = GTK_LIST_BOX_ROW(children->data);
+                res = GTK_LIST_BOX_ROW(children->data); // owned by box
             else {
-                GList* last = g_list_last(children);
+                GList* last = g_list_last(children); // freed with children
                 res = GTK_LIST_BOX_ROW(last->data);
             }
         }
@@ -157,8 +177,8 @@ get_adjacent_row(GtkListBox* box, GtkListBoxRow* row, gboolean next)
 static void
 navigate(GtkListBox* box, gboolean next)
 {
-    GtkListBoxRow* sel = gtk_list_box_get_selected_row(box);
-    GtkListBoxRow* adj = get_adjacent_row(box, sel, next);
+    GtkListBoxRow* sel = gtk_list_box_get_selected_row(box); // owned by box
+    GtkListBoxRow* adj = get_adjacent_row(box, sel, next);   // owned by box
     if (adj) {
         gtk_list_box_select_row(box, adj);
         // Keep focus in search entry
@@ -205,9 +225,7 @@ parser_task_callback(PaperDatabase* db,
                      gpointer user_data,
                      GError* error)
 {
-    // user_data not currently used
     (void)user_data;
-    // db not currently used
     (void)db;
 
     if (error) {
@@ -243,7 +261,8 @@ fire_parser_task(gchar* path)
     if (!path)
         return;
     g_debug("Parsing '%s'...\n", path);
-    async_parser_run(s_db, path, parser_task_callback, NULL);
+    async_parser_run(
+      s_db, path, parser_task_callback, NULL); // takes ownership of path
 }
 
 /* Drag-and-drop: process dropped PDF URIs */
@@ -263,15 +282,17 @@ on_pdf_dropped(GtkWidget* widget,
     (void)info;
     (void)user_data;
 
-    gchar** uris = gtk_selection_data_get_uris(selection_data);
+    gchar** uris = gtk_selection_data_get_uris(
+      selection_data); // freed before function return
     if (!uris)
         return;
 
     // fire off a task for each URI
     for (int i = 0; uris && uris[i]; ++i) {
         // free path when the task returns
-        gchar* path = g_filename_from_uri(uris[i], NULL, NULL);
-        fire_parser_task(path);
+        gchar* path = g_filename_from_uri(
+          uris[i], NULL, NULL); // freed by parser_task_callback()
+        fire_parser_task(path); // takes ownership of path
     }
 
     g_strfreev(uris);
@@ -283,7 +304,7 @@ void
 gui_run(GtkApplication* app, PaperDatabase* db)
 {
     s_db = db;
-    //int max_threads = g_settings_get_int(app_flags.settings, "gui-threads");
+    // int max_threads = g_settings_get_int(app_flags.settings, "gui-threads");
     int max_threads = MIN(4, g_get_num_processors() / 2);
     gui_loom = loom_new(max_threads);
 
@@ -293,7 +314,7 @@ gui_run(GtkApplication* app, PaperDatabase* db)
     gtk_window_set_application(GTK_WINDOW(w), app);
 
     // setup PDF viewer
-    pdf_viewer_setup(gui_loom, b, "pdf_scrollbar", "pdf_view");
+    pdf_viewer_setup(gui_loom, app, b, "pdf_scrollbar", "pdf_view");
 
     // grab widgets
     search_entry = GTK_ENTRY(gtk_builder_get_object(b, "search_entry"));
@@ -307,6 +328,7 @@ gui_run(GtkApplication* app, PaperDatabase* db)
     g_signal_connect(
       results_list, "row-selected", G_CALLBACK(on_results_row_selected), NULL);
     g_signal_connect(w, "key-press-event", G_CALLBACK(on_key_press), NULL);
+    g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);
     g_signal_connect(w, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
     // enable drag and drop for PDF files

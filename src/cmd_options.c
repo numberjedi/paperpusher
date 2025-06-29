@@ -4,7 +4,7 @@
 AppFlags app_flags = { NULL, NULL, NULL, FALSE, NULL };
 DebugFlags debug_flags = { FALSE, FALSE, FALSE };
 
-const GOptionEntry cmd_options[] = {
+const GOptionEntry cmd_options[] = { // freed before exit
     { "version",
       'v',
       0,
