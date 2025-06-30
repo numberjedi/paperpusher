@@ -4,8 +4,8 @@ CFLAGS = -std=c99 -Wall -Wextra -I. -Isrc -O3
 LDFLAGS =
 # check for "asan" arg and add debug flags if set
 ifeq ($(MAKECMDGOALS),asan)
-	CFLAGS += -g -O0 -fsanitize=address,leak,undefined -fno-omit-frame-pointer
-	LDFLAGS += -fsanitize=address,leak,undefined 
+	CFLAGS += -g -O0 -fsanitize=address -fno-omit-frame-pointer
+	LDFLAGS += -fsanitize=address
 endif
 # check for "lsan" arg and add debug flags if set
 ifeq ($(MAKECMDGOALS),gdb)

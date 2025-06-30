@@ -378,6 +378,6 @@ Loom*
 loom_get_default(void)
 {
     if (!global_loom)
-        global_loom = loom_new(0);
+        global_loom = loom_new(1);
     return global_loom;
 }

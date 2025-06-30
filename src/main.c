@@ -20,11 +20,14 @@ free_options()
 static void
 on_activate(GApplication* app, gpointer user_data)
 {
+    pango_cairo_font_map_get_default();
+    gdk_display_manager_get();
     PaperDatabase* db = user_data;
 
     // if HEADLESS_MODE
     // run_headless(app, db);
     // else
+    load_database(db, app_flags.json_path, app_flags.cache_path);
     gui_run(GTK_APPLICATION(app), db);
 }
 
@@ -35,7 +38,8 @@ on_command_line(GApplication* app,
                 gpointer user_data)
 {
     (void)cmdline;
-    PaperDatabase* db = user_data;
+    (void)user_data;
+    //PaperDatabase* db = user_data;
 
     // GError* error = NULL;
 
@@ -58,7 +62,7 @@ on_command_line(GApplication* app,
     /* Actual program logic is happening from here on */
 
     // load available data into db
-    load_database(db, app_flags.json_path, app_flags.cache_path);
+    //load_database(db, app_flags.json_path, app_flags.cache_path);
 
     // app flags
     if (app_flags.import_paths != NULL) {
@@ -85,16 +89,20 @@ on_startup(GApplication* app, gpointer user_data)
     (void)user_data;
     g_debug("Startup hook!");
     g_set_application_name("PaperPusher");
+
+    // Force GTK to initialize stuff on main thread
+    // GtkWidget* tmp = gtk_label_new(NULL);
+    // gtk_widget_destroy(tmp);
 }
 
 int
 main(int argc, char** argv)
 {
-    PaperDatabase* db = create_database(1, JSON_PATH, CACHE_PATH); // freed before function return
-
     GApplicationFlags flags = G_APPLICATION_HANDLES_COMMAND_LINE;
     GtkApplication* app =
       gtk_application_new("com.numberjedi.paperpusher", flags); // freed before function return
+
+    PaperDatabase* db = create_database(1, JSON_PATH, CACHE_PATH); // freed before function return
 
     g_signal_connect(app, "startup", G_CALLBACK(on_startup), NULL);
     g_signal_connect(app, "command-line", G_CALLBACK(on_command_line), db);

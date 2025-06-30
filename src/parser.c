@@ -5,10 +5,8 @@
 #include "parser.h"
 #include "cJSON/cJSON.h"
 #include "config.h"
-#include "loader.h"
 #include "loom.h"
 #include "paper.h"
-#include "serializer.h"
 
 #include <gio/gio.h>
 #include <glib.h>
@@ -16,17 +14,19 @@
 #include <unistd.h>
 
 /**
- * Helper: safely extract string from JSON or return NULL 
+ * Helper: safely extract string from JSON or return NULL
  * cJSON owns the returned string
  */
 static gchar*
 get_str(cJSON* obj, const gchar* key)
 {
     cJSON* e = cJSON_GetObjectItem(obj, key);
-    return (e && e->valuestring) ? e->valuestring : NULL; // freed by cJSON_Delete()
+    return (e && e->valuestring) ? e->valuestring
+                                 : NULL; // freed by cJSON_Delete()
 }
 
-/* Locate the `paperparser` binary. On failure, set error. Caller owns the returned string. */
+/* Locate the `paperparser` binary. On failure, set error. Caller owns the
+ * returned string. */
 static gchar*
 find_paperparser_path(GError** error)
 {
@@ -35,9 +35,10 @@ find_paperparser_path(GError** error)
     ssize_t len = readlink(SELF_EXE_PATH, exe_path, PATH_MAX);
     if (len >= 0) {
         exe_path[len] = '\0';
-        g_autofree gchar* app_dir = g_path_get_dirname(exe_path); // freed before function return
-        gchar* candidate =
-          g_build_filename(app_dir, PAPERPARSER_REL_PATH, NULL); // owned by caller
+        g_autofree gchar* app_dir =
+          g_path_get_dirname(exe_path); // freed before function return
+        gchar* candidate = g_build_filename(
+          app_dir, PAPERPARSER_REL_PATH, NULL); // owned by caller
         if (g_file_test(candidate, G_FILE_TEST_IS_EXECUTABLE))
             return candidate;
         /* No executable here, try next */
@@ -52,7 +53,8 @@ find_paperparser_path(GError** error)
         g_free(candidate);
     }
     /* 3) PATH lookup */
-    gchar* found = g_find_program_in_path(PAPERPARSER_EXE_NAME); // owned by caller
+    gchar* found =
+      g_find_program_in_path(PAPERPARSER_EXE_NAME); // owned by caller
     if (found)
         return found;
     g_free(found);
@@ -76,12 +78,14 @@ run_paperparser_on_pdf(const gchar* pdf_path,
                        GError** error)
 {
     /* Find parser executable */
-    g_autofree gchar* parser_path = find_paperparser_path(error); // freed before function return
+    g_autofree gchar* parser_path =
+      find_paperparser_path(error); // freed before function return
     if (!parser_path)
         return FALSE; // caller handles error
 
     /* Spawn and capture JSON output */
-    g_autofree gchar* cmd = g_strdup_printf("%s '%s'", parser_path, pdf_path); // freed before function return
+    g_autofree gchar* cmd = g_strdup_printf(
+      "%s '%s'", parser_path, pdf_path); // freed before function return
     gint exit_status = 0;
     if (!g_spawn_command_line_sync(cmd, stdout_buf, NULL, &exit_status, error))
         return FALSE; // caller handles error
@@ -128,7 +132,10 @@ populate_metadata(Paper* p, cJSON* spans, GError** error)
             title = text;
         } else if (g_strcmp0(entity, "AUTHOR") == 0) {
             /* Append author */
-            authors = g_realloc(authors, sizeof(gchar*) * (authors_count + 1)); // freed before function return
+            authors =
+              g_realloc(authors,
+                        sizeof(gchar*) *
+                          (authors_count + 1)); // freed before function return
             authors[authors_count++] = text;
         } else if (g_strcmp0(entity, "YEAR") == 0 && text) {
             year = atoi(text);
@@ -169,12 +176,14 @@ static Paper*
 parser_run(PaperDatabase* db, const gchar* pdf_path, GError** error)
 {
     g_autofree gchar* stdout_buf = NULL;
-    run_paperparser_on_pdf(pdf_path, &stdout_buf, error); // freed before function return
+    run_paperparser_on_pdf(
+      pdf_path, &stdout_buf, error); // freed before function return
     if (!stdout_buf)
         return NULL; // caller handles error
 
     /* Parse JSON */
-    cJSON* json = cJSON_Parse(stdout_buf); // freed by cJSON_Delete() before function return
+    cJSON* json =
+      cJSON_Parse(stdout_buf); // freed by cJSON_Delete() before function return
     if (!json) {
         const char* errptr = cJSON_GetErrorPtr(); // owned by cJSON
         gint offset = errptr ? (gint)(errptr - stdout_buf) : -1;
@@ -189,7 +198,8 @@ parser_run(PaperDatabase* db, const gchar* pdf_path, GError** error)
 
     cJSON* spans = cJSON_GetObjectItem(json, "predicted_spans");
 
-    Paper* p = initialize_paper(db, pdf_path, error); // owned by @db, freed by free_paper()
+    Paper* p = initialize_paper(
+      db, pdf_path, error); // owned by @db, freed by free_paper()
 
     /* Populate metadata */
     gboolean success = populate_metadata(p, spans, error);
@@ -270,10 +280,13 @@ async_parser_run(PaperDatabase* db,
                  void (*callback)(PaperDatabase*, Paper*, gpointer, GError*),
                  gpointer user_data)
 {
-    AsyncParserRunData* worker_data = g_new0(AsyncParserRunData, 1); // freed by callback
-    worker_data->pdf_path = pdf_path; // freed by callback (worker_data is not returned to *callback)
+    AsyncParserRunData* worker_data =
+      g_new0(AsyncParserRunData, 1); // freed by callback
+    worker_data->pdf_path =
+      pdf_path; // freed by callback (worker_data is not returned to *callback)
     worker_data->db = db;
-    AsyncParserCallbackData* callback_data = g_new0(AsyncParserCallbackData, 1); // freed by callback
+    AsyncParserCallbackData* callback_data =
+      g_new0(AsyncParserCallbackData, 1); // freed by callback
     callback_data->callback = callback;
     callback_data->user_data = user_data;
 

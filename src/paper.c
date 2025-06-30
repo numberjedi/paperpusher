@@ -1,7 +1,6 @@
 #define G_LOG_DOMAIN "paper"
 
 #include "paper.h"
-#include "config.h"
 #include "glib.h"
 #include "loader.h"
 #include "loom.h"
@@ -211,8 +210,10 @@ load_database(PaperDatabase* db,
     GError* error = NULL;
 
     WITH_DB_WRITE_LOCK(db, {
-        db->path = json_path ? g_strdup(json_path) : db->path; // freed by free_database()
-        db->cache = cache_path ? g_strdup(cache_path) : db->cache; // freed by free_database()
+        db->path = json_path ? g_strdup(json_path)
+                             : db->path; // freed by free_database()
+        db->cache = cache_path ? g_strdup(cache_path)
+                               : db->cache; // freed by free_database()
     });
 
     /* Load from cache or JSON file */

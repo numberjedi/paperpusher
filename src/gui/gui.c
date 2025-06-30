@@ -137,6 +137,7 @@ on_results_row_selected(GtkListBox* box, GtkListBoxRow* row, gpointer user_data)
         pdf_viewer_load(NULL);
         return;
     }
+    // TODO: check for NULL (after deletion or sth)
     Paper* p = g_object_get_data(G_OBJECT(row), "paper"); // (owned by db)
     pdf_viewer_load(p->pdf_file);
 }
@@ -186,6 +187,45 @@ navigate(GtkListBox* box, gboolean next)
     }
 }
 
+static void
+open_system_viewer()
+{
+    GtkListBoxRow* sel = gtk_list_box_get_selected_row(results_list);
+    if (!sel)
+        return;
+    Paper* p = g_object_get_data(G_OBJECT(sel), "paper"); // owned by db
+    gchar* pdf_file = p->pdf_file;                        // owned by p
+    g_debug("Opening '%s'\n", pdf_file);
+    // if (g_str_has_prefix(pdf_file, "file://"))
+    //     pdf_file += 7;
+    GError* error = NULL; // handled before return
+    g_autofree gchar* uri = g_filename_to_uri(pdf_file, NULL, &error);
+    if (!error) {
+        g_app_info_launch_default_for_uri(uri, NULL, &error);
+        // g_autofree gchar* quoted = g_shell_quote(pdf_file);
+        // g_autofree gchar* cmd = g_strconcat("xdg-open ", quoted, NULL);
+        // g_spawn_command_line_async(cmd, &error);
+    }
+    if (error) {
+        g_printerr("Error launching default app for URI '%s': %s\n",
+                   uri,
+                   error->message);
+        g_clear_error(&error);
+    }
+}
+
+static void 
+remove_entry_from_db()
+{
+    GtkListBoxRow* sel = gtk_list_box_get_selected_row(results_list);
+    if (!sel)
+        return;
+    Paper* p = g_object_get_data(G_OBJECT(sel), "paper"); // owned by db
+    gtk_list_box_unselect_row(results_list, sel);
+    remove_paper(s_db, p);
+    g_signal_emit_by_name(search_entry, "changed");
+}
+
 static gboolean
 on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data)
 {
@@ -198,18 +238,22 @@ on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer user_data)
     if (key == GDK_KEY_Down || (ctrl && key == GDK_KEY_n)) {
         navigate(results_list, TRUE);
         return TRUE;
-    }
-    if (key == GDK_KEY_Up || (ctrl && key == GDK_KEY_p)) {
+    } else if (key == GDK_KEY_Up || (ctrl && key == GDK_KEY_p)) {
         navigate(results_list, FALSE);
         return TRUE;
     }
-
     // pdf viewer scrolling, if a pdf is loaded
-    if ((ctrl && key == GDK_KEY_f) || key == GDK_KEY_Page_Down) {
+    else if ((ctrl && key == GDK_KEY_f) || key == GDK_KEY_Page_Down) {
         pdf_viewer_scroll_by(1.0);
         return TRUE;
     } else if ((ctrl && key == GDK_KEY_b) || key == GDK_KEY_Page_Up) {
         pdf_viewer_scroll_by(-1.0);
+        return TRUE;
+    } else if (ctrl && key == GDK_KEY_o) {
+        open_system_viewer();
+        return TRUE;
+    } else if (ctrl && key == GDK_KEY_d) {
+        remove_entry_from_db();
         return TRUE;
     }
     return FALSE;
@@ -306,7 +350,9 @@ gui_run(GtkApplication* app, PaperDatabase* db)
     s_db = db;
     // int max_threads = g_settings_get_int(app_flags.settings, "gui-threads");
     int max_threads = MIN(4, g_get_num_processors() / 2);
+    // g_idle_add((GSourceFunc)loom_new, GINT_TO_POINTER(max_threads));
     gui_loom = loom_new(max_threads);
+    // gui_loom = loom_get_default();
 
     // load Glade UI
     GtkBuilder* b = gtk_builder_new_from_file("src/gui/main_window.ui");
