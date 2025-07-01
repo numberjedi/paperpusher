@@ -13,4 +13,22 @@ G_BEGIN_DECLS
 void
 gui_run(GtkApplication* app, PaperDatabase* db);
 
+void
+navigate(GtkListBox* box, gboolean next);
+
+void
+focus_search_entry();
+
+void
+focus_main_window();
+
+void
+open_system_viewer();
+
+void
+remove_entry_from_db();
+
+void
+gui_reset_database();
+
 G_END_DECLS

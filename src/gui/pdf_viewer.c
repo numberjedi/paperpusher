@@ -231,6 +231,26 @@ on_pdf_draw(GtkWidget* widget, cairo_t* cr, gpointer user_data)
         const gchar* msg = "Select a PDF to preview it";
         PangoLayout* layout =
           gtk_widget_create_pango_layout(widget, msg); // freed before return
+
+        // style the message according to the current theme
+        // color
+        GtkStyleContext* context = gtk_widget_get_style_context(widget);
+        GdkRGBA foreground;
+        gtk_style_context_get_color(
+          context, GTK_STATE_FLAG_NORMAL, &foreground);
+        cairo_set_source_rgba(cr,
+                              foreground.red,
+                              foreground.green,
+                              foreground.blue,
+                              foreground.alpha);
+        // font
+        PangoFontDescription* desc = NULL;
+          gtk_style_context_get(context, GTK_STATE_FLAG_NORMAL, "font", &desc, NULL);
+        if (desc) {
+            pango_layout_set_font_description(layout, desc);
+            pango_font_description_free(desc);
+        }
+
         int lw, lh;
         pango_layout_get_size(layout, &lw, &lh);
         lw /= PANGO_SCALE;

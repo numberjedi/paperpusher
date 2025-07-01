@@ -98,6 +98,7 @@ on_startup(GApplication* app, gpointer user_data)
 int
 main(int argc, char** argv)
 {
+    // freopen("/dev/null", "w", stderr);
     GApplicationFlags flags = G_APPLICATION_HANDLES_COMMAND_LINE;
     GtkApplication* app =
       gtk_application_new("com.numberjedi.paperpusher", flags); // freed before function return

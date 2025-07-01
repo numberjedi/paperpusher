@@ -55,31 +55,28 @@ loom_thread_snapped(gpointer user_data)
  * Shuttles the thread through the Loom using the given shuttle.
  */
 static void
-loom_shuttle_wrapper(GTask* thread,
-                     gpointer source_object,
-                     gpointer task_data,
-                     GCancellable* cancellable)
+loom_shuttle_wrapper(gpointer thread, gpointer e)
 {
-    (void)source_object;
-    (void)task_data;
+    (void)e;
     // TODO: implement cancellable
-    (void)cancellable;
-    LoomActiveThread* active_thread = g_task_get_task_data(thread);
+    LoomActiveThread* active_thread = thread;
 
     GError* error = NULL; // to be handled by knot
     // TODO: progress
     // If you want progress, do it manually in the shuttle
+    // g_print("Shuttle start--");
     gpointer result =
       active_thread->spec->shuttle(active_thread->spec->shuttle_data, &error);
+    // g_print("Shuttle end\n");
 
     if (active_thread->timeout_id)
         g_source_remove(active_thread->timeout_id);
 
     if (error)
-        g_task_return_error(thread, error);
+        g_task_return_error(active_thread->thread, error);
     else
         g_task_return_pointer(
-          thread, result, NULL); // transfer ownershipt of result to knot
+          active_thread->thread, result, NULL); // transfer ownershipt of result to knot
     //  GTask will free on its own, no need to g_object_unref(task)
 }
 
@@ -114,7 +111,7 @@ loom_weave(Loom* loom, LoomThreadSpec* thread_spec)
       loom->running_threads, g_strdup(active_thread->spec->tag), active_thread);
 
     // pass thread off to shuttle
-    g_task_run_in_thread(active_thread->thread, loom_shuttle_wrapper);
+    g_thread_pool_push(loom->pool, active_thread, NULL);
 }
 
 /**
@@ -159,6 +156,7 @@ static void
 loom_tie_off(GObject* source, GAsyncResult* result, gpointer tie_off_data)
 {
     (void)source;
+    gchar* test = g_new0(gchar, 1);
     LoomActiveThread* active_thread = tie_off_data;
     Loom* loom = active_thread->owning_loom;
     GTask* thread = G_TASK(result);
@@ -171,6 +169,8 @@ loom_tie_off(GObject* source, GAsyncResult* result, gpointer tie_off_data)
     if (active_thread->spec->knot)
         active_thread->spec->knot(
           active_thread->spec->knot_data, shuttle_data, result_pointer, error);
+    else
+        g_warning("loom_tie_off: knot is NULL");
 
     // g_mutex_lock(&loom->lock);
     // all use of hash_tables is in main thread so no need lock
@@ -190,6 +190,7 @@ loom_tie_off(GObject* source, GAsyncResult* result, gpointer tie_off_data)
     // active_thread->thread is freed automatically after return
     g_clear_object(&active_thread->snippable);
     free_loom_active_thread(active_thread);
+    g_free(test);
 }
 
 /**
@@ -256,13 +257,14 @@ loom_queue_thread(Loom* loom,
                 return;
             }
             if (!loom->running_threads) {
-                g_warning("loom_pick_up_ready: loom->running_threads is NULL!");
+                g_warning("loom_queue_thread: loom->running_threads is NULL!");
                 // g_mutex_unlock(&loom->lock);
                 return;
             }
             if (!*dep)
                 g_warning("loom_queue_thread: dep is NULL!");
             g_debug("Checking dependency '%s'\n", *dep);
+            // TODO: optional, check whether a dependency is queued
             if (g_hash_table_contains(loom->running_threads, *dep)) {
                 has_dependencies_running = TRUE;
                 g_debug("thread %s has dependencies\n", thread_spec->tag);
@@ -288,6 +290,10 @@ loom_queue_thread(Loom* loom,
                 if (thread_has_priority(thread_spec_copy, spec)) {
                     g_queue_insert_before(
                       queue, g_queue_peek_nth_link(queue, i), thread_spec_copy);
+                    break;
+                }
+                if (i == queue->length - 1) {
+                    g_queue_push_tail(queue, thread_spec_copy);
                     break;
                 }
             }
@@ -333,17 +339,18 @@ loom_disassemble(Loom* loom)
 }
 
 Loom*
-loom_new(gint max_threads)
+loom_new(guint max_threads)
 {
     Loom* loom = g_new0(Loom, 1); // freed by loom_disassemble()
     if (!loom->pool) {
         if (max_threads <= 0)
             max_threads = MAX(2, g_get_num_processors() - 1);
         loom->max_threads = max_threads;
-        loom->pool = g_thread_pool_new((GFunc)g_task_run_in_thread,
+        g_print("Creating thread pool with %d threads\n", max_threads);
+        loom->pool = g_thread_pool_new((GFunc)loom_shuttle_wrapper,
                                        NULL,
                                        max_threads,
-                                       FALSE,
+                                       TRUE, // don't use global queue
                                        NULL); // freed by loom_disassemble()
 
         loom->running_threads = g_hash_table_new_full(
@@ -378,6 +385,6 @@ Loom*
 loom_get_default(void)
 {
     if (!global_loom)
-        global_loom = loom_new(1);
+        global_loom = loom_new(0);
     return global_loom;
 }

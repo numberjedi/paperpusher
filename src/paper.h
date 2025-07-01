@@ -128,6 +128,13 @@ void
 remove_paper(PaperDatabase* db, Paper* paper);
 
 /**
+ * Resets the database to its initial state.
+ * All Papers are removed, and the database is empty.
+ */
+void
+reset_database(PaperDatabase* db);
+
+/**
  * Frees a PaperDatabase struct and all its Papers.
  */
 void

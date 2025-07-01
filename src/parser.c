@@ -84,11 +84,24 @@ run_paperparser_on_pdf(const gchar* pdf_path,
         return FALSE; // caller handles error
 
     /* Spawn and capture JSON output */
-    g_autofree gchar* cmd = g_strdup_printf(
-      "%s '%s'", parser_path, pdf_path); // freed before function return
+    gchar* argv[] = { parser_path, (gchar*)pdf_path, NULL };
+    g_autofree gchar* stderr_buf = NULL;
     gint exit_status = 0;
-    if (!g_spawn_command_line_sync(cmd, stdout_buf, NULL, &exit_status, error))
-        return FALSE; // caller handles error
+    gboolean success = g_spawn_sync(NULL,
+                                    argv,
+                                    NULL,
+                                    0,
+                                    NULL,
+                                    NULL,
+                                    stdout_buf,
+                                    &stderr_buf,
+                                    &exit_status,
+                                    error);
+    // g_autofree gchar* cmd = g_strdup_printf(
+    //   "%s '%s'", parser_path, pdf_path); // freed before function return
+    // gint exit_status = 0;
+    // if (!g_spawn_command_line_sync(cmd, stdout_buf, NULL, &exit_status,
+    // error)) return FALSE; // caller handles error
 
     if (exit_status != 0 || *stdout_buf == NULL) {
         if (!*error) {
@@ -175,11 +188,22 @@ populate_metadata(Paper* p, cJSON* spans, GError** error)
 static Paper*
 parser_run(PaperDatabase* db, const gchar* pdf_path, GError** error)
 {
+    // g_print("-run start-");
     g_autofree gchar* stdout_buf = NULL;
     run_paperparser_on_pdf(
       pdf_path, &stdout_buf, error); // freed before function return
     if (!stdout_buf)
         return NULL; // caller handles error
+    if (*error) {
+        g_warning("Error running paperparser on '%s': %s\n",
+                   pdf_path,
+                   (*error)->message);
+        if (stdout_buf)
+            g_warning("stdout: %s\n", stdout_buf);
+        g_error_free(*error);
+        *error = NULL;
+        return NULL;
+    }
 
     /* Parse JSON */
     cJSON* json =
@@ -207,6 +231,7 @@ parser_run(PaperDatabase* db, const gchar* pdf_path, GError** error)
     if (!success || !p)
         return NULL; // caller handles error
 
+    // g_print("-run end-");
     return p;
 }
 
@@ -222,28 +247,34 @@ typedef struct
     void (*callback)(PaperDatabase*, Paper*, gpointer, GError*);
 } AsyncParserCallbackData;
 
+// TODO: Error handling for wrong / inexistent files / dirs
 static void
 parser_task_callback(gpointer callback_data,
                      gpointer worker_data,
                      gpointer result,
                      GError* error)
 {
+    // g_print("-callback start-");
     g_debug("parser_task_callback\n");
     Paper* paper = result;
-    g_debug("paper title: %s\n", paper->title);
+    if (paper)
+        g_debug("paper title: %s\n", paper->title);
     AsyncParserCallbackData* data = callback_data;
     AsyncParserRunData* run_data = worker_data;
 
     PaperDatabase* db = NULL;
     if (run_data->db)
         db = run_data->db;
+    g_debug("error: %s\n", error ? error->message : "<NULL>");
     data->callback(db, paper, data->user_data, error);
 
     //// data->pdf_path was hard copied into p->pdf_file
     //// in initialize_paper(), so it needs to be freed here.
+    // g_print("Freeing pdf_path %s", run_data->pdf_path);
     g_free(run_data->pdf_path);
     g_free(run_data);
     g_free(data);
+    // g_print("-callback end-\n");
 }
 
 static gpointer
@@ -298,6 +329,7 @@ async_parser_run(PaperDatabase* db,
     spec.shuttle_data = worker_data;
     spec.knot = parser_task_callback;
     spec.knot_data = callback_data;
+    spec.priority = 4;
 
     loom_queue_thread(loom, &spec, NULL);
 }

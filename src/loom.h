@@ -59,7 +59,7 @@ loom_get_default(void);
  * If max_threads <= 0, the number of threads is auto-detected.
  */
 Loom*
-loom_new(gint max_threads);
+loom_new(guint max_threads);
 
 /**
  * Runs the given thread_spec on the Loom object.

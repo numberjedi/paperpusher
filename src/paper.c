@@ -20,6 +20,10 @@ add_paper(PaperDatabase* db, Paper* paper)
         }
         db->count++;
         paper->id_in_db = db->count - 1;
+        g_debug("adding paper id:%d, capacity:%d, count:%d\n",
+                paper->id_in_db,
+                db->capacity,
+                db->count);
         db->papers[paper->id_in_db] = paper;
     });
 }
@@ -54,6 +58,7 @@ free_paper(Paper* p)
     free_paper_fields(p);
     g_mutex_clear(&p->lock);
     g_free(p);
+    p = NULL;
 }
 
 static gpointer
@@ -74,7 +79,7 @@ write_json_knot(gpointer callback_data,
     (void)result;
     (void)worker_data;
     if (error) {
-        g_printerr("Error writing JSON: %s\n", error->message);
+        g_warning("Error writing JSON: %s\n", error->message);
         g_clear_error(&error);
     }
 }
@@ -97,7 +102,7 @@ write_cache_knot(gpointer callback_data,
     (void)result;
     (void)worker_data;
     if (error) {
-        g_printerr("Error writing cache: %s\n", error->message);
+        g_warning("Error writing cache: %s\n", error->message);
         g_clear_error(&error);
     }
 }
@@ -112,6 +117,8 @@ sync_json_and_cache(PaperDatabase* db)
     json_spec.shuttle_data = db;
     json_spec.knot = write_json_knot;
     json_spec.priority = 5;
+    static const gchar* json_deps[] = { "parser", NULL };
+    json_spec.dependencies = json_deps;
 
     LoomThreadSpec cache_spec = loom_thread_spec_default();
     cache_spec.tag = "write-cache";
@@ -119,7 +126,7 @@ sync_json_and_cache(PaperDatabase* db)
     cache_spec.shuttle_data = db;
     cache_spec.knot = write_cache_knot;
     cache_spec.priority = 5;
-    static const gchar* cache_deps[] = { "write-json", NULL };
+    static const gchar* cache_deps[] = { "write-json", "parser", NULL };
     cache_spec.dependencies = cache_deps;
 
     loom_queue_thread(loom, &json_spec, NULL);
@@ -220,13 +227,13 @@ load_database(PaperDatabase* db,
     // TODO: async
     if (!cache_up_to_date(db->path, db->cache) || !load_cache(db, &error)) {
         if (error) {
-            g_printerr(
+            g_warning(
               "Error loading cache '%s': %s\n", cache_path, error->message);
             g_clear_error(&error);
         } else
             g_message("Cache not up to date, attempting to load from JSON.\n");
         if (!load_papers_from_json(db, &error)) {
-            g_printerr(
+            g_warning(
               "Error loading JSON '%s': %s\nContinuing with empty database.\n",
               json_path,
               error->message);
@@ -309,6 +316,24 @@ remove_paper(PaperDatabase* db, Paper* paper)
         db->count--;
     });
     return;
+}
+
+void
+reset_database(PaperDatabase* db)
+{
+    if (!db)
+        return;
+    WITH_DB_WRITE_LOCK(db, {
+        if (db->papers) {
+            for (int i = 0; i < db->count; i++)
+                free_paper(db->papers[i]);
+            g_free(db->papers);
+            db->papers = g_new0(Paper*, 1); // freed by free_database()
+        }
+        db->capacity = 1;
+        db->count = 0;
+    });
+    // TODO: sync json and cache
 }
 
 void

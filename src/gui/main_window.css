@@ -1,0 +1,81 @@
+/* Default app-wide font and base spacing */
+* {
+  /* font-family: "Sans", "Helvetica", "Arial", sans-serif; */
+  /* font-size: 10pt; */
+  /* padding: 0; */
+  /* margin: 0; */
+  /* border: 0; */
+  /* color: @theme_fg_color; */
+  /* background-color: @theme_bg_color; */
+}
+
+/* ==========================
+   Top-level app containers
+   ========================== */
+
+#main-window {
+  /* background-color: @theme_base_color; */
+}
+
+#main-vbox {
+  padding: 6px;
+}
+
+/* ==========================
+   Keybinding hint bar
+   ========================== */
+
+#key-hint-container {
+  /* background-color: shade(@theme_bg_color, 1.1); */
+  border-top: 1px solid @theme_fg_color;
+  padding: 4px 6px;
+}
+
+#mode-label {
+  font-weight: bold;
+  /* color: @theme_selected_fg_color; */
+  padding-right: 20px;
+  border-right: 1px solid @theme_fg_color;
+}
+
+#key-hint-label {
+  /* color: @theme_fg_color; */
+}
+
+#keybindings-label {
+  padding: 0 20px;
+}
+
+/* ==========================
+   Result list
+   ========================== */
+
+#search-pane{
+  min-width: 400px;
+}
+
+.result-row {
+  padding: 6px;
+  border-bottom: 1px solid shade(@theme_fg_color, 0.8);
+}
+
+.result-row:hover {
+  /* background-color: shade(@theme_selected_bg_color, 1.1); */
+}
+
+/* Title text */
+.result-title {
+  font-weight: bold;
+  color: @theme_text_color;
+}
+
+/* Author line */
+.result-authors {
+  font-style: italic;
+  opacity: 0.8;
+}
+
+/* Year label */
+.result-year {
+  opacity: 0.6;
+}
