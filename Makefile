@@ -17,9 +17,9 @@ PKG_CFLAGS  := $(shell pkg-config --cflags gtk+-3.0 poppler-glib)
 PKG_LIBS    := $(shell pkg-config --libs gtk+-3.0 poppler-glib)
 
 # ONNX Runtime, embed path to the library
-ONNX_DIR := deps/onnxruntime
-ONNX_CFLAGS := -I$(ONNX_DIR)/include
-ONNX_LDFLAGS := -L$(ONNX_DIR)/lib -lonnxruntime -wl,-rpath,'$$ORIGIN/$(ONNX_DIR)/lib'
+# ONNX_DIR := deps/onnxruntime
+# ONNX_CFLAGS := -I$(ONNX_DIR)/include
+# ONNX_LDFLAGS := -L$(ONNX_DIR)/lib -lonnxruntime -Wl,-rpath,'$$ORIGIN/$(ONNX_DIR)/lib'
 
 CFLAGS += $(PKG_CFLAGS) $(ONNX_CFLAGS)
 LDFLAGS += $(PKG_LIBS) $(ONNX_LDFLAGS) -lcjson -lm
